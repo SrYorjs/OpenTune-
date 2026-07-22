@@ -249,20 +249,20 @@ class InnerTube {
         continuation: String? = null,
     ) = withRetry {
         httpClient.post("search") {
-        ytClient(client, setLogin = useLoginForBrowse)
-        setBody(
-            SearchBody(
-                context = client.toContext(
-                    locale,
-                    visitorData,
-                    if (useLoginForBrowse) dataSyncId else null
-                ),
-                query = query,
-                params = params
+            ytClient(client, setLogin = useLoginForBrowse)
+            setBody(
+                SearchBody(
+                    context = client.toContext(
+                        locale,
+                        visitorData,
+                        if (useLoginForBrowse) dataSyncId else null
+                    ),
+                    query = query,
+                    params = params
+                )
             )
-        )
-        parameter("continuation", continuation)
-        parameter("ctoken", continuation)
+            parameter("continuation", continuation)
+            parameter("ctoken", continuation)
         }
     }
 
@@ -676,13 +676,15 @@ class InnerTube {
     suspend fun createPlaylist(
         client: YouTubeClient,
         title: String,
+        description: String? = null,
     ) = withRetry {
         httpClient.post("playlist/create") {
             ytClient(client, true)
             setBody(
                 CreatePlaylistBody(
                     context = client.toContext(locale, visitorData, dataSyncId),
-                    title = title
+                    title = title,
+                    description = description,
                 )
             )
         }

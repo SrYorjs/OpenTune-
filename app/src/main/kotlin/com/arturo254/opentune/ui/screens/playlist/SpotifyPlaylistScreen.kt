@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -323,18 +324,28 @@ fun SpotifyPlaylistScreen(
         if (isCreatingYtmPlaylist || tracks.isEmpty() || !isSignedIn) return
         coroutineScope.launch {
             isCreatingYtmPlaylist = true
-            val browseId = YouTube.createPlaylist(state.playlist?.name ?: "Spotify").getOrNull()
+            val spotifyPlaylist = state.playlist
+            val playlistName = spotifyPlaylist?.name ?: "Spotify"
+            val playlistDescription = spotifyPlaylist?.description?.takeIf { it.isNotBlank() }
+            val playlistCoverUrl = spotifyPlaylist?.images?.firstOrNull()?.url?.takeIf { it.isNotBlank() }
+
+            val browseId = YouTube.createPlaylist(playlistName, playlistDescription).getOrNull()
             if (browseId == null) {
                 isCreatingYtmPlaylist = false
                 Toast.makeText(context, context.getString(R.string.spotify_ytm_create_failed), Toast.LENGTH_LONG).show()
                 return@launch
             }
             val entity = PlaylistEntity(
-                name = state.playlist?.name ?: "Spotify",
+                name = playlistName,
                 browseId = browseId,
                 bookmarkedAt = LocalDateTime.now(),
                 isEditable = true,
+                thumbnailUrl = playlistCoverUrl,
             )
+            // Todo el trabajo de base de datos va en UN solo bloque .transaction{},
+            // que despacha al executor de Room en background — llamar a estas
+            // funciones directamente en la corrutina (que corre en el hilo
+            // principal de Compose) es lo que causaba el crash de Room.
             database.transaction {
                 insert(entity)
             }
@@ -348,8 +359,8 @@ fun SpotifyPlaylistScreen(
                 } else {
                     database.transaction {
                         insert(metadata)
+                        addSongToPlaylist(playlist, listOf(metadata.id))
                     }
-                    database.addSongToPlaylist(playlist, listOf(metadata.id))
                     YouTube.addToPlaylist(browseId, metadata.id)
                 }
             }
@@ -827,7 +838,7 @@ fun SpotifyPlaylistScreen(
                             if (isCreatingYtmPlaylist) {
                                 Text(
                                     text = stringResource(
-                                        R.string.spotify_downloading_playlist,
+                                        R.string.spotify_creating_ytm_playlist,
                                         ytmCreateProgress.first,
                                         ytmCreateProgress.second,
                                     ),

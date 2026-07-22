@@ -1263,28 +1263,49 @@ private fun AnimatedWordV2(
     }
 
     // ── Bounce and Float animation ──
-    // Subtle scale up peaking halfway through the word. Exact timing sync!
+    // Scale up peaking halfway through the word — more pronounced than before
+    // so the "pop" reads clearly at a glance, not just as a faint shimmer.
     val sinProgress = kotlin.math.sin(progress * kotlin.math.PI).toFloat()
-    val wordScale = 1f + (0.015f * sinProgress)
+    val wordScale = 1f + (0.045f * sinProgress)
 
     // Float is only applied when the word is actively sung, making it pop from the line.
-    // We use animateFloatAsState so that when it finishes (and drops to 0f), 
-    // it smoothly decays back into place rather than a harsh mathematical snap.
-    val targetFloat = if (isWordActive) -4f * sinProgress else 0f
+    // Spring physics instead of a fixed tween gives it a slightly organic, bouncy settle
+    // instead of a mechanical linear return.
+    val targetFloat = if (isWordActive) -5f * sinProgress else 0f
     val floatOffset by androidx.compose.animation.core.animateFloatAsState(
         targetValue = targetFloat,
-        animationSpec = androidx.compose.animation.core.tween(
-            durationMillis = if (isWordActive) 50 else 350,
-            easing = androidx.compose.animation.core.FastOutSlowInEasing
-        )
+        animationSpec = if (isWordActive) {
+            androidx.compose.animation.core.tween(durationMillis = 50, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+        } else {
+            androidx.compose.animation.core.spring(
+                dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                stiffness = androidx.compose.animation.core.Spring.StiffnessLow,
+            )
+        }
     )
 
     // ── Glow intensity ──
     // "lines and words that are done animating shouldnt continue to glow"
     // Make glow build up faster: reach max intensity at 50% progress
     val glowProgress = (progress * 2f).coerceAtMost(1f)
-    val glowAlpha = if (isWordActive) glowProgress * 0.45f else 0f
-    val glowRadius = if (isWordActive) glowProgress * 12f else 0f
+    val targetGlowAlpha = if (isWordActive) glowProgress * 0.5f else 0f
+    val targetGlowRadius = if (isWordActive) glowProgress * 14f else 0f
+    // Animate the glow itself so it eases into an "afterglow" fade once the word
+    // finishes, rather than snapping to zero the instant it completes.
+    val glowAlpha by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = targetGlowAlpha,
+        animationSpec = androidx.compose.animation.core.tween(
+            durationMillis = if (isWordActive) 80 else 260,
+            easing = androidx.compose.animation.core.LinearOutSlowInEasing,
+        ),
+    )
+    val glowRadius by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = targetGlowRadius,
+        animationSpec = androidx.compose.animation.core.tween(
+            durationMillis = if (isWordActive) 80 else 260,
+            easing = androidx.compose.animation.core.LinearOutSlowInEasing,
+        ),
+    )
 
     val actualFontSize = if (isBackground) fontSize * 0.85f else fontSize
     val fontWeight = FontWeight.SemiBold // Consistent weight — no thin→bold jump

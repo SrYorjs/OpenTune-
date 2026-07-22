@@ -51,6 +51,7 @@ val DefaultProviderOrder = listOf(
     PreferredLyricsProvider.KUGOU,
     PreferredLyricsProvider.BETTER_LYRICS,
     PreferredLyricsProvider.SIMPMUSIC,
+    PreferredLyricsProvider.LYRICSIFY,
 )
 
 fun PreferredLyricsProvider.displayName(): String = when (this) {

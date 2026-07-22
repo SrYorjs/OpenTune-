@@ -465,7 +465,8 @@
     <string name="spotify_connected">Connected to Spotify</string>
     <string name="spotify_download_playlist">Download playlist</string>
     <string name="spotify_create_ytm_playlist">Create in YouTube Music</string>
-    <string name="spotify_ytm_create_failed">Couldn't create the YouTube Music playlist</string>
+    <string name="spotify_ytm_create_failed">Couldn\'t create the YouTube Music playlist</string>
+    <string name="spotify_creating_ytm_playlist">Creating playlist %1$d/%2$d</string>
     <string name="spotify_downloading_playlist">Downloading %1$d/%2$d</string>
     <string name="ai_model_no_results">ia model no results</string>
     <string name="tracks_label">Tracks</string>
