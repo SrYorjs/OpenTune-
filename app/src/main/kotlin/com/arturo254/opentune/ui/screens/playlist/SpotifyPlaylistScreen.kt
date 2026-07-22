@@ -103,8 +103,12 @@ import com.arturo254.opentune.LocalPlayerConnection
 import com.arturo254.opentune.R
 import com.arturo254.opentune.constants.AppBarHeight
 import com.arturo254.opentune.constants.DisableBlurKey
+import com.arturo254.opentune.constants.InnerTubeCookieKey
 import com.arturo254.opentune.extensions.togglePlayPause
 import com.arturo254.opentune.models.MediaMetadata
+import com.arturo254.opentune.db.entities.Playlist
+import com.arturo254.opentune.db.entities.PlaylistEntity
+import com.arturo254.opentune.innertube.YouTube
 import com.arturo254.opentune.playback.ExoDownloadService
 import com.arturo254.opentune.spotify.SpotifyMapper
 import com.arturo254.opentune.spotify.SpotifyPlaybackResolver
@@ -121,6 +125,7 @@ import com.arturo254.opentune.ui.utils.resize
 import com.arturo254.opentune.utils.makeTimeString
 import com.arturo254.opentune.utils.rememberPreference
 import com.arturo254.opentune.ui.component.ExpressivePullToRefreshBox
+import java.time.LocalDateTime
 import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -308,6 +313,61 @@ fun SpotifyPlaylistScreen(
     val trackDownloadState = remember { mutableStateMapOf<String, SpotifyTrackDownloadState>() }
     var isDownloadingAll by remember { mutableStateOf(false) }
     var downloadAllProgress by remember { mutableStateOf(0 to 0) }
+
+    val (innerTubeCookie) = rememberPreference(InnerTubeCookieKey, "")
+    val isSignedIn = innerTubeCookie.isNotEmpty()
+    var isCreatingYtmPlaylist by remember { mutableStateOf(false) }
+    var ytmCreateProgress by remember { mutableStateOf(0 to 0) }
+
+    fun createYouTubeMusicPlaylist() {
+        if (isCreatingYtmPlaylist || tracks.isEmpty() || !isSignedIn) return
+        coroutineScope.launch {
+            isCreatingYtmPlaylist = true
+            val browseId = YouTube.createPlaylist(state.playlist?.name ?: "Spotify").getOrNull()
+            if (browseId == null) {
+                isCreatingYtmPlaylist = false
+                Toast.makeText(context, context.getString(R.string.spotify_ytm_create_failed), Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            val entity = PlaylistEntity(
+                name = state.playlist?.name ?: "Spotify",
+                browseId = browseId,
+                bookmarkedAt = LocalDateTime.now(),
+                isEditable = true,
+            )
+            database.transaction {
+                insert(entity)
+            }
+            val playlist = Playlist(playlist = entity, songCount = 0, songThumbnails = emptyList())
+            var notFoundCount = 0
+            tracks.forEachIndexed { index, track ->
+                ytmCreateProgress = index to tracks.size
+                val metadata = SpotifyPlaybackResolver.resolveToMetadata(track)
+                if (metadata == null) {
+                    notFoundCount++
+                } else {
+                    database.transaction {
+                        insert(metadata)
+                    }
+                    database.addSongToPlaylist(playlist, listOf(metadata.id))
+                    YouTube.addToPlaylist(browseId, metadata.id)
+                }
+            }
+            ytmCreateProgress = tracks.size to tracks.size
+            isCreatingYtmPlaylist = false
+            if (notFoundCount > 0) {
+                Toast.makeText(
+                    context,
+                    context.resources.getQuantityString(
+                        R.plurals.spotify_download_not_found,
+                        notFoundCount,
+                        notFoundCount,
+                    ),
+                    Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+    }
 
     suspend fun downloadSpotifyTrack(track: SpotifyTrack): Boolean {
         trackDownloadState[track.id] = SpotifyTrackDownloadState.RESOLVING
@@ -740,6 +800,46 @@ fun SpotifyPlaylistScreen(
                                     ),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 8.dp),
+                                )
+                            }
+
+                            Button(
+                                onClick = { createYouTubeMusicPlaylist() },
+                                enabled = tracks.isNotEmpty() && isSignedIn && !isCreatingYtmPlaylist,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 12.dp),
+                            ) {
+                                if (isCreatingYtmPlaylist) {
+                                    CircularWavyProgressIndicator(modifier = Modifier.size(20.dp))
+                                } else {
+                                    Icon(
+                                        painter = painterResource(R.drawable.playlist_add),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(stringResource(R.string.spotify_create_ytm_playlist))
+                                }
+                            }
+
+                            if (isCreatingYtmPlaylist) {
+                                Text(
+                                    text = stringResource(
+                                        R.string.spotify_downloading_playlist,
+                                        ytmCreateProgress.first,
+                                        ytmCreateProgress.second,
+                                    ),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 8.dp),
+                                )
+                            } else if (!isSignedIn) {
+                                Text(
+                                    text = stringResource(R.string.not_logged_in_youtube),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.error,
                                     modifier = Modifier.padding(top = 8.dp),
                                 )
                             }

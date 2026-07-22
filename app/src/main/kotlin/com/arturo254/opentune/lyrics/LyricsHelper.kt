@@ -43,6 +43,7 @@ constructor(
             BetterLyricsProvider,
             LrcLibLyricsProvider,
             KuGouLyricsProvider,
+            LyricsifyLyricsProvider,
             YouTubeSubtitleLyricsProvider,
             YouTubeLyricsProvider,
         )
@@ -58,7 +59,7 @@ constructor(
             GlobalLog.append(Log.DEBUG, "LyricsHelper", "Found lyrics in cache for ${mediaMetadata.title}")
             return cached.lyrics
         }
-        
+
         GlobalLog.append(Log.DEBUG, "LyricsHelper", "Fetching lyrics for ${mediaMetadata.title} (Artist: ${mediaMetadata.artists.joinToString { it.name }}, Album: ${mediaMetadata.album?.title})")
 
         val isNetworkAvailable = try {
@@ -66,7 +67,7 @@ constructor(
         } catch (e: Exception) {
             true
         }
-        
+
         if (!isNetworkAvailable) {
             GlobalLog.append(Log.WARN, "LyricsHelper", "Network unavailable, aborting lyrics fetch")
             return LYRICS_NOT_FOUND
@@ -78,7 +79,7 @@ constructor(
         val deferred = scope.async {
             for (provider in providers) {
                 val enabled = provider.isEnabled(context)
-                
+
                 if (enabled) {
                     try {
                         val result = provider.getLyrics(
@@ -131,7 +132,7 @@ constructor(
         } catch (e: Exception) {
             true
         }
-        
+
         if (!isNetworkAvailable) {
             return
         }
@@ -164,6 +165,7 @@ constructor(
         PreferredLyricsProvider.KUGOU -> KuGouLyricsProvider
         PreferredLyricsProvider.BETTER_LYRICS -> BetterLyricsProvider
         PreferredLyricsProvider.SIMPMUSIC -> SimpMusicLyricsProvider
+        PreferredLyricsProvider.LYRICSIFY -> LyricsifyLyricsProvider
     }
 
     private suspend fun orderedProviders(): List<LyricsProvider> {

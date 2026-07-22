@@ -28,6 +28,13 @@ data class LyricsRomanizationPreferences(
 object LyricsUtils {
     val LINE_REGEX = "((\\[\\d\\d:\\d\\d\\.\\d{2,3}\\] ?)+)(.+)".toRegex()
     val TIME_REGEX = "\\[(\\d\\d):(\\d\\d)\\.(\\d{2,3})\\]".toRegex()
+    val WORD_TIME_REGEX = "<(\\d\\d):(\\d\\d)\\.(\\d{2,3})>".toRegex()
+
+    private fun parseTimeToMillis(min: String, sec: String, milString: String): Long {
+        var mil = milString.toLong()
+        if (milString.length == 2) mil *= 10
+        return min.toLong() * DateUtils.MINUTE_IN_MILLIS + sec.toLong() * DateUtils.SECOND_IN_MILLIS + mil
+    }
 
     private val KANA_ROMAJI_MAP: Map<String, String> = mapOf(
         // Digraphs (Yōon - combinations like kya, sho)
@@ -72,15 +79,15 @@ object LyricsUtils {
 
     private val HANGUL_ROMAJA_MAP: Map<String, Map<String, String>> = mapOf(
         "cho" to mapOf(
-            "ᄀ" to "g",  "ᄁ" to "kk", "ᄂ" to "n",  "ᄃ" to "d", 
+            "ᄀ" to "g",  "ᄁ" to "kk", "ᄂ" to "n",  "ᄃ" to "d",
             "ᄄ" to "tt", "ᄅ" to "r",  "ᄆ" to "m",  "ᄇ" to "b",
             "ᄈ" to "pp", "ᄉ" to "s",  "ᄊ" to "ss", "ᄋ" to "",
             "ᄌ" to "j",  "ᄍ" to "jj", "ᄎ" to "ch", "ᄏ" to "k",
             "ᄐ" to "t",  "ᄑ" to "p",  "ᄒ" to "h"
         ),
         "jung" to mapOf(
-            "ᅡ" to "a",  "ᅢ" to "ae", "ᅣ" to "ya",  "ᅤ" to "yae", 
-            "ᅥ" to "eo", "ᅦ" to "e",  "ᅧ" to "yeo", "ᅨ" to "ye", 
+            "ᅡ" to "a",  "ᅢ" to "ae", "ᅣ" to "ya",  "ᅤ" to "yae",
+            "ᅥ" to "eo", "ᅦ" to "e",  "ᅧ" to "yeo", "ᅨ" to "ye",
             "ᅩ" to "o",  "ᅪ" to "wa", "ᅫ" to "wae", "ᅬ" to "oe",
             "ᅭ" to "yo", "ᅮ" to "u",  "ᅯ" to "wo",  "ᅰ" to "we",
             "ᅱ" to "wi", "ᅲ" to "yu", "ᅳ" to "eu",  "ᅴ" to "eui",
@@ -165,7 +172,15 @@ object LyricsUtils {
                 result.addAll(entries)
             }
         }
-        return result.sorted()
+        val sorted = result.sorted()
+        return sorted.mapIndexed { index, entry ->
+            val words = entry.words
+            if (words.isNullOrEmpty()) return@mapIndexed entry
+            val last = words.last()
+            if (last.startTime != last.endTime) return@mapIndexed entry
+            val nextTime = if (index < sorted.lastIndex) sorted[index + 1].time / 1000.0 else last.startTime + 3.0
+            entry.copy(words = words.dropLast(1) + last.copy(endTime = nextTime))
+        }
     }
 
     private fun parseLine(line: String): List<LyricsEntry>? {
@@ -174,21 +189,60 @@ object LyricsUtils {
         }
         val matchResult = LINE_REGEX.matchEntire(line.trim()) ?: return null
         val times = matchResult.groupValues[1]
-        val text = matchResult.groupValues[3]
-        val timeMatchResults = TIME_REGEX.findAll(times)
+        val rawText = matchResult.groupValues[3]
+        val timeMatchResults = TIME_REGEX.findAll(times).toList()
+        if (timeMatchResults.isEmpty()) {
+            return null
+        }
+        val firstLineTime = parseTimeToMillis(
+            timeMatchResults.first().groupValues[1],
+            timeMatchResults.first().groupValues[2],
+            timeMatchResults.first().groupValues[3],
+        )
 
-        return timeMatchResults
-            .map { timeMatchResult ->
-                val min = timeMatchResult.groupValues[1].toLong()
-                val sec = timeMatchResult.groupValues[2].toLong()
-                val milString = timeMatchResult.groupValues[3]
-                var mil = milString.toLong()
-                if (milString.length == 2) {
-                    mil *= 10
-                }
-                val time = min * DateUtils.MINUTE_IN_MILLIS + sec * DateUtils.SECOND_IN_MILLIS + mil
-                LyricsEntry(time, text)
-            }.toList()
+        val wordMatches = WORD_TIME_REGEX.findAll(rawText).toList()
+        if (wordMatches.isEmpty()) {
+            return timeMatchResults.map { timeMatchResult ->
+                val time = parseTimeToMillis(
+                    timeMatchResult.groupValues[1],
+                    timeMatchResult.groupValues[2],
+                    timeMatchResult.groupValues[3],
+                )
+                LyricsEntry(time, rawText)
+            }
+        }
+
+        val segments = WORD_TIME_REGEX.split(rawText)
+        val offsets = mutableListOf<Triple<String, Long, Long>>()
+        var currentOffset = 0L
+        segments.forEachIndexed { index, segment ->
+            if (segment.isEmpty()) return@forEachIndexed
+            val end = if (index < wordMatches.size) {
+                val m = wordMatches[index]
+                parseTimeToMillis(m.groupValues[1], m.groupValues[2], m.groupValues[3]) - firstLineTime
+            } else {
+                -1L
+            }
+            offsets.add(Triple(segment, currentOffset, end))
+            if (end >= 0) currentOffset = end
+        }
+
+        val cleanText = rawText.replace(WORD_TIME_REGEX, "")
+        return timeMatchResults.map { timeMatchResult ->
+            val entryTime = parseTimeToMillis(
+                timeMatchResult.groupValues[1],
+                timeMatchResult.groupValues[2],
+                timeMatchResult.groupValues[3],
+            )
+            val words = offsets.map { (text, startOffset, endOffset) ->
+                WordTimestamp(
+                    text = text,
+                    startTime = (entryTime + startOffset) / 1000.0,
+                    endTime = (entryTime + (if (endOffset >= 0) endOffset else startOffset)) / 1000.0,
+                )
+            }
+            LyricsEntry(entryTime, cleanText, words)
+        }
     }
 
     fun findCurrentLineIndex(
@@ -351,7 +405,7 @@ object LyricsUtils {
 
             if (char in '\uAC00'..'\uD7A3') {
                 val syllableIndex = char.code - 0xAC00
-                
+
                 val choIndex = syllableIndex / (21 * 28)
                 val jungIndex = (syllableIndex % (21 * 28)) / 28
                 val jongIndex = syllableIndex % 28
@@ -399,14 +453,14 @@ object LyricsUtils {
     fun isJapanese(text: String): Boolean {
         return text.any { char ->
             (char in '\u3040'..'\u309F') || // Hiragana
-            (char in '\u30A0'..'\u30FF') || // Katakana
-            // CJK Unified Ideographs (covers most common Kanji)
-            // Note: This range also includes many Chinese Hanzi.
-            // Differentiating Japanese Kanji from Chinese Hanzi solely based on Unicode
-            // ranges is challenging as they share many characters.
-            // For more accurate Japanese detection, one might need to analyze
-            // the presence of Hiragana/Katakana alongside Kanji.
-            (char in '\u4E00'..'\u9FFF')
+                    (char in '\u30A0'..'\u30FF') || // Katakana
+                    // CJK Unified Ideographs (covers most common Kanji)
+                    // Note: This range also includes many Chinese Hanzi.
+                    // Differentiating Japanese Kanji from Chinese Hanzi solely based on Unicode
+                    // ranges is challenging as they share many characters.
+                    // For more accurate Japanese detection, one might need to analyze
+                    // the presence of Hiragana/Katakana alongside Kanji.
+                    (char in '\u4E00'..'\u9FFF')
         }
     }
 
@@ -418,7 +472,7 @@ object LyricsUtils {
             (char in '\uAC00'..'\uD7A3') // Hangul Syllables
         }
     }
-        
+
     /**
      * Checks if the given text contains any Chinese characters (common Hanzi).
      * This function is generally efficient due to '.any' and early exit.

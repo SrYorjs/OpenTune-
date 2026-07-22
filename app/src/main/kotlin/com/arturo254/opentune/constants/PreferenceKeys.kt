@@ -58,6 +58,7 @@ fun PreferredLyricsProvider.displayName(): String = when (this) {
     PreferredLyricsProvider.KUGOU -> "KuGou"
     PreferredLyricsProvider.BETTER_LYRICS -> "BetterLyrics"
     PreferredLyricsProvider.SIMPMUSIC -> "SimpMusic"
+    PreferredLyricsProvider.LYRICSIFY -> "Lyricsify"
 }
 
 enum class SliderStyle {
@@ -76,6 +77,7 @@ val EnableKugouKey = booleanPreferencesKey("enableKugou")
 val EnableLrcLibKey = booleanPreferencesKey("enableLrclib")
 val EnableBetterLyricsKey = booleanPreferencesKey("enableBetterLyrics")
 val EnableSimpMusicLyricsKey = booleanPreferencesKey("enableSimpMusicLyrics")
+val EnableLyricsifyKey = booleanPreferencesKey("enableLyricsify")
 val HideExplicitKey = booleanPreferencesKey("hideExplicit")
 val HideVideoKey = booleanPreferencesKey("hideVideo")
 val ProxyEnabledKey = booleanPreferencesKey("proxyEnabled")
@@ -393,6 +395,7 @@ enum class PreferredLyricsProvider {
     KUGOU,
     BETTER_LYRICS,
     SIMPMUSIC,
+    LYRICSIFY,
 }
 
 enum class PlayerButtonsStyle {
