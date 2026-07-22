@@ -8,11 +8,24 @@
 
 package com.arturo254.opentune.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -56,6 +69,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
@@ -154,16 +169,37 @@ fun QuickPicksSection(
     ) { index ->
         val song = distinctQuickPicks[index]
         val isActive = song.id == mediaMetadata?.id
+        val interactionSource = remember { MutableInteractionSource() }
+        val isPressed by interactionSource.collectIsPressedAsState()
+        val cardScale by animateFloatAsState(
+            targetValue = if (isPressed) 0.97f else 1f,
+            animationSpec = spring(
+                stiffness = Spring.StiffnessMediumLow,
+                dampingRatio = Spring.DampingRatioMediumBouncy
+            ),
+            label = "quickPickScale"
+        )
+        val overlayAlpha by animateFloatAsState(
+            targetValue = if (isActive) 0.86f else 0.72f,
+            animationSpec = spring(stiffness = Spring.StiffnessLow),
+            label = "quickPickOverlay"
+        )
 
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = cardScale
+                    scaleY = cardScale
+                    transformOrigin = TransformOrigin.Center
+                }
                 .maskClip(MaterialTheme.shapes.extraLarge)
                 .maskBorder(
                     BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     MaterialTheme.shapes.extraLarge
                 )
                 .combinedClickable(
+                    interactionSource = interactionSource,
                     onClick = {
                         if (isActive) {
                             playerConnection.player.togglePlayPause()
@@ -177,7 +213,7 @@ fun QuickPicksSection(
                             SongMenu(
                                 originalSong = song,
                                 navController = navController,
-                        metadata = metadataMap[song.id],
+                                metadata = metadataMap[song.id],
                                 onDismiss = menuState::dismiss
                             )
                         }
@@ -202,52 +238,72 @@ fun QuickPicksSection(
                             colors = listOf(
                                 Color.Transparent,
                                 Color.Transparent,
-                                Color.Black.copy(alpha = 0.7f)
+                                Color.Black.copy(alpha = overlayAlpha)
                             )
                         )
                     )
             )
 
-            if (isActive && isPlaying) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(12.dp)
-                        .size(32.dp)
-                        .background(
-                            MaterialTheme.colorScheme.primary,
-                            CircleShape
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.volume_up),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(18.dp)
-                    )
+            AnimatedVisibility(
+                visible = isActive && isPlaying,
+                enter = fadeIn(animationSpec = tween(220)) + scaleIn(
+                    initialScale = 0.86f,
+                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                ),
+                exit = fadeOut(animationSpec = tween(160)) + scaleOut(targetScale = 0.9f)
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(12.dp)
+                            .size(32.dp)
+                            .background(
+                                MaterialTheme.colorScheme.primary,
+                                CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.volume_up),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
 
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(16.dp)
+            AnimatedVisibility(
+                visible = true,
+                enter = fadeIn(animationSpec = tween(220)) + slideInVertically(
+                    initialOffsetY = { it / 5 },
+                    animationSpec = tween(220)
+                ),
+                exit = fadeOut(animationSpec = tween(160)) + slideOutVertically(targetOffsetY = { it / 5 })
             ) {
-                Text(
-                    text = song.song.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = song.artists.joinToString { it.name },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.7f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(16.dp)
+                    ) {
+                        Text(
+                            text = song.song.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = song.artists.joinToString { it.name },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = 0.7f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
             }
         }
     }
@@ -330,13 +386,34 @@ fun SpeedDialSection(
             ) { song ->
                 val songIndex = speedDialIndexById[song.id] ?: 0
                 val isActive = song.id == mediaMetadata?.id
+                val interactionSource = remember { MutableInteractionSource() }
+                val isPressed by interactionSource.collectIsPressedAsState()
+                val cardScale by animateFloatAsState(
+                    targetValue = if (isPressed) 0.97f else 1f,
+                    animationSpec = spring(
+                        stiffness = Spring.StiffnessMediumLow,
+                        dampingRatio = Spring.DampingRatioMediumBouncy
+                    ),
+                    label = "speedDialScale"
+                )
+                val overlayAlpha by animateFloatAsState(
+                    targetValue = if (isActive) 0.82f else 0.68f,
+                    animationSpec = spring(stiffness = Spring.StiffnessLow),
+                    label = "speedDialOverlay"
+                )
 
                 Box(
                     modifier = Modifier
                         .width(tileSize)
                         .aspectRatio(1f)
+                        .graphicsLayer {
+                            scaleX = cardScale
+                            scaleY = cardScale
+                            transformOrigin = TransformOrigin.Center
+                        }
                         .clip(RoundedCornerShape(16.dp))
                         .combinedClickable(
+                            interactionSource = interactionSource,
                             onClick = {
                                 if (isActive) {
                                     playerConnection.player.togglePlayPause()
@@ -358,7 +435,10 @@ fun SpeedDialSection(
                         )
                 ) {
                     AsyncImage(
-                        model = song.song.thumbnailUrl,
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(song.song.thumbnailUrl)
+                            .crossfade(true)
+                            .build(),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
@@ -372,37 +452,57 @@ fun SpeedDialSection(
                                     colors = listOf(
                                         Color.Transparent,
                                         Color.Transparent,
-                                        Color.Black.copy(alpha = 0.7f)
+                                        Color.Black.copy(alpha = overlayAlpha)
                                     )
                                 )
                             )
                     )
 
-                    Text(
-                        text = song.song.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
-                    )
-
-                    if (isActive && isPlaying) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .padding(10.dp)
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.volume_up),
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.padding(6.dp).size(16.dp)
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = true,
+                        enter = fadeIn(animationSpec = tween(220)) + slideInVertically(
+                            initialOffsetY = { it / 6 },
+                            animationSpec = tween(220)
+                        ),
+                        exit = fadeOut(animationSpec = tween(160)) + slideOutVertically(targetOffsetY = { it / 6 })
+                    ) {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            Text(
+                                text = song.song.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier
+                                    .align(Alignment.BottomStart)
+                                    .padding(horizontal = 12.dp, vertical = 10.dp)
                             )
+                        }
+                    }
+
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = isActive && isPlaying,
+                        enter = fadeIn(animationSpec = tween(220)) + scaleIn(
+                            initialScale = 0.86f,
+                            animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                        ),
+                        exit = fadeOut(animationSpec = tween(160)) + scaleOut(targetScale = 0.9f)
+                    ) {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(10.dp)
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.volume_up),
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.padding(6.dp).size(16.dp)
+                                )
+                            }
                         }
                     }
                 }

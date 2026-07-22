@@ -304,15 +304,25 @@ class MusicService :
             .proxy(YouTube.streamProxy)
             .followRedirects(true)
             .followSslRedirects(true)
+            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            // Hard ceiling for the whole request (including body). ExoPlayer requests
+            // bounded chunks (CHUNK_LENGTH = 512KB), so this comfortably covers a slow
+            // connection while still catching a CDN edge that stalls mid-transfer —
+            // which readTimeout alone won't catch since it only measures gaps between
+            // individual reads, not total call duration.
+            .callTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
             .addInterceptor { chain ->
                 val request = chain.request()
                 val host = request.url.host
                 val isYouTubeMediaHost =
                     host.endsWith("googlevideo.com") ||
-                        host.endsWith("googleusercontent.com") ||
-                        host.endsWith("youtube.com") ||
-                        host.endsWith("youtube-nocookie.com") ||
-                        host.endsWith("ytimg.com")
+                            host.endsWith("googleusercontent.com") ||
+                            host.endsWith("youtube.com") ||
+                            host.endsWith("youtube-nocookie.com") ||
+                            host.endsWith("ytimg.com")
 
                 if (!isYouTubeMediaHost) return@addInterceptor chain.proceed(request)
 
@@ -367,7 +377,7 @@ class MusicService :
         val appProcesses = activityManager.runningAppProcesses ?: return false
         return appProcesses.any { processInfo ->
             processInfo.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND &&
-                processInfo.processName == packageName
+                    processInfo.processName == packageName
         }
     }
 
@@ -584,7 +594,7 @@ class MusicService :
         val state = player.playbackState
         val keepAlive =
             player.isPlaying ||
-                (player.playWhenReady && (state == Player.STATE_BUFFERING || state == Player.STATE_READY))
+                    (player.playWhenReady && (state == Player.STATE_BUFFERING || state == Player.STATE_READY))
         if (keepAlive) {
             cancelIdleStop()
             return
@@ -610,7 +620,7 @@ class MusicService :
                 val currentState = player.playbackState
                 val shouldKeep =
                     player.isPlaying ||
-                        (player.playWhenReady && (currentState == Player.STATE_BUFFERING || currentState == Player.STATE_READY))
+                            (player.playWhenReady && (currentState == Player.STATE_BUFFERING || currentState == Player.STATE_READY))
                 if (shouldKeep) return@launch
                 if (togetherSessionState.value !is com.arturo254.opentune.together.TogetherSessionState.Idle) return@launch
                 stopForegroundAndSelf()
@@ -695,7 +705,7 @@ class MusicService :
                 setSmallIcon(R.drawable.opentune)
             }
         )
-        
+
         updateNotification()
         player.repeatMode = REPEAT_MODE_OFF
 
@@ -822,7 +832,7 @@ class MusicService :
                     }
                 }
             }
-        
+
         dataStore.data
             .map { (it[AudioCrossfadeDurationKey] ?: 0) * 1000 }
             .distinctUntilChanged()
@@ -921,23 +931,23 @@ class MusicService :
             audioNormalizationEnabled.value = normalizeAudio
             Timber.tag("AudioNormalization").d("Audio normalization enabled: $normalizeAudio")
             Timber.tag("AudioNormalization").d("Format loudnessDb: ${format?.loudnessDb}, perceptualLoudnessDb: ${format?.perceptualLoudnessDb}")
-            
+
             normalizeFactor.value =
                 if (normalizeAudio) {
                     // Use loudnessDb if available, otherwise fall back to perceptualLoudnessDb
                     val loudness = format?.loudnessDb ?: format?.perceptualLoudnessDb
-                    
+
                     if (loudness != null) {
                         val loudnessDb = loudness.toFloat()
                         var factor = 10f.pow(-loudnessDb / 20)
-                        
+
                         Timber.tag("AudioNormalization").d("Calculated raw normalization factor: $factor (from loudness: $loudnessDb)")
-                        
+
                         if (factor > 1f) {
                             factor = min(factor, maxSafeGainFactor)
                             Timber.tag("AudioNormalization").d("Factor capped at maxSafeGainFactor: $factor")
                         }
-                        
+
                         Timber.tag("AudioNormalization").i("Applying normalization factor: $factor")
                         factor
                     } else {
@@ -1009,7 +1019,7 @@ class MusicService :
                     val delayPercent = dataStore.get(ScrobbleDelayPercentKey, LastFM.DEFAULT_SCROBBLE_DELAY_PERCENT)
                     val minSongDuration = dataStore.get(ScrobbleMinSongDurationKey, LastFM.DEFAULT_SCROBBLE_MIN_SONG_DURATION)
                     val delaySeconds = dataStore.get(ScrobbleDelaySecondsKey, LastFM.DEFAULT_SCROBBLE_DELAY_SECONDS)
-                    
+
                     scrobbleManager = com.arturo254.opentune.utils.ScrobbleManager(
                         ioScope,
                         minSongDuration = minSongDuration,
@@ -1051,39 +1061,39 @@ class MusicService :
             if (dataStore.get(PersistentQueueKey, true)) {
                 readPersistentObject<PersistQueue>(PERSISTENT_QUEUE_FILE)
                     ?.let { persistedQueue ->
-                    restorePersistentQueue(persistedQueue)
-                }
+                        restorePersistentQueue(persistedQueue)
+                    }
                 readPersistentObject<PersistQueue>(PERSISTENT_AUTOMIX_FILE)
                     ?.let { persistedAutomix ->
-                    val items = persistedAutomix.items.map { it.toMediaItem() }
-                    withContext(Dispatchers.Main) {
-                        automixItems.value = items
-                        automixSeedMediaId = player.currentMetadata?.id?.trim()?.takeIf { it.isNotBlank() }
+                        val items = persistedAutomix.items.map { it.toMediaItem() }
+                        withContext(Dispatchers.Main) {
+                            automixItems.value = items
+                            automixSeedMediaId = player.currentMetadata?.id?.trim()?.takeIf { it.isNotBlank() }
+                        }
                     }
-                }
-                
+
                 readPersistentObject<PersistPlayerState>(PERSISTENT_PLAYER_STATE_FILE)
                     ?.let { playerState ->
-                    delay(1000)
-                    withContext(Dispatchers.Main) {
-                        player.repeatMode = playerState.repeatMode
-                        player.shuffleModeEnabled = playerState.shuffleModeEnabled
-                        playerVolume.value = playerState.volume
-                        
-                        if (player.mediaItemCount > 0) {
-                            val index =
-                                if (playerState.currentMediaItemIndex in 0 until player.mediaItemCount) {
-                                    playerState.currentMediaItemIndex
-                                } else {
-                                    player.currentMediaItemIndex.coerceIn(0, player.mediaItemCount - 1)
-                                }
-                            player.seekTo(index, playerState.currentPosition)
+                        delay(1000)
+                        withContext(Dispatchers.Main) {
+                            player.repeatMode = playerState.repeatMode
+                            player.shuffleModeEnabled = playerState.shuffleModeEnabled
+                            playerVolume.value = playerState.volume
+
+                            if (player.mediaItemCount > 0) {
+                                val index =
+                                    if (playerState.currentMediaItemIndex in 0 until player.mediaItemCount) {
+                                        playerState.currentMediaItemIndex
+                                    } else {
+                                        player.currentMediaItemIndex.coerceIn(0, player.mediaItemCount - 1)
+                                    }
+                                player.seekTo(index, playerState.currentPosition)
+                            }
+
+                            currentMediaMetadata.value = player.currentMetadata
+                            updateNotification()
                         }
-                        
-                        currentMediaMetadata.value = player.currentMetadata
-                        updateNotification()
                     }
-                }
             }
             withContext(Dispatchers.Main) {
                 queueRestoreCompleted.value = true
@@ -1306,7 +1316,7 @@ class MusicService :
                     player.play()
                     wasPlayingBeforeAudioFocusLoss = false
                 }
-        
+
                 lastAudioFocusState = focusChange
             }
 
@@ -1321,7 +1331,7 @@ class MusicService :
 
     private fun requestAudioFocus(): Boolean {
         if (hasAudioFocus) return true
-    
+
         audioFocusRequest?.let { request ->
             val result = audioManager.requestAudioFocus(request)
             hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
@@ -1361,9 +1371,9 @@ class MusicService :
         if (isDeviceMutedNow()) {
             val canPauseNow =
                 player.currentMediaItem != null &&
-                    player.playWhenReady &&
-                    player.playbackState != Player.STATE_IDLE &&
-                    player.playbackState != Player.STATE_ENDED
+                        player.playWhenReady &&
+                        player.playbackState != Player.STATE_IDLE &&
+                        player.playbackState != Player.STATE_ENDED
 
             if (canPauseNow) {
                 player.pause()
@@ -1377,8 +1387,8 @@ class MusicService :
         wasAutoPausedByDeviceMute = false
         val canResumeNow =
             player.currentMediaItem != null &&
-                player.playbackState != Player.STATE_IDLE &&
-                player.playbackState != Player.STATE_ENDED
+                    player.playbackState != Player.STATE_IDLE &&
+                    player.playbackState != Player.STATE_ENDED
         if (canResumeNow) {
             player.play()
         }
@@ -1394,7 +1404,7 @@ class MusicService :
             val isAudioDevice = try {
                 val majorClass = device.bluetoothClass?.majorDeviceClass
                 majorClass == BluetoothClass.Device.Major.AUDIO_VIDEO ||
-                    majorClass == BluetoothClass.Device.Major.WEARABLE
+                        majorClass == BluetoothClass.Device.Major.WEARABLE
             } catch (_: SecurityException) {
                 true
             }
@@ -1658,7 +1668,7 @@ class MusicService :
         if (!permanentShuffle) {
             player.shuffleModeEnabled = false
         }
-        
+
         clearAutomix()
         automixSeedMediaId = null
         autoAddedMediaIds.clear()
@@ -1693,15 +1703,15 @@ class MusicService :
             } else {
                 val items = initialStatus.items
                 val index = initialStatus.mediaItemIndex
-                
+
                 // Chunk Loading: Only load a window around the current item initially
                 // to prevent blocking the Main Thread for seconds with large queues.
                 val windowStart = (index - 20).coerceAtLeast(0)
                 val windowEnd = (index + 50).coerceAtMost(items.size)
-                
+
                 val initialChunk = items.subList(windowStart, windowEnd)
                 val relativeIndex = index - windowStart
-                
+
                 player.setMediaItems(
                     initialChunk,
                     if (relativeIndex > 0) relativeIndex else 0,
@@ -1712,20 +1722,20 @@ class MusicService :
                 if (player.shuffleModeEnabled) {
                     applyCurrentFirstShuffleOrder()
                 }
-                
+
                 // Defer loading the rest of the queue
                 if (items.size > initialChunk.size) {
                     scope.launch(SilentHandler) {
                         try {
                             delay(2000) // Allow UI to settle
                             if (!isActive) return@launch
-                            
+
                             // Add preceding items
                             if (windowStart > 0) {
                                 val startChunk = items.subList(0, windowStart)
                                 player.addMediaItems(0, startChunk)
                             }
-                            
+
                             // Add succeeding items
                             if (windowEnd < items.size) {
                                 val endChunk = items.subList(windowEnd, items.size)
@@ -1789,14 +1799,14 @@ class MusicService :
             val radioItems = initialStatus.items.filter { item ->
                 item.mediaId != currentMediaId
             }
-            
+
             if (radioItems.isNotEmpty()) {
                 val itemCount = player.mediaItemCount
-                
+
                 if (itemCount > currentIndex + 1) {
                     player.removeMediaItems(currentIndex + 1, itemCount)
                 }
-                
+
                 player.addMediaItems(currentIndex + 1, radioItems)
             }
 
@@ -1815,7 +1825,7 @@ class MusicService :
     }
 
     fun getAutomix(playlistId: String) {
-        if (dataStore.get(AutoLoadMoreKey, true) && 
+        if (dataStore.get(AutoLoadMoreKey, true) &&
             player.repeatMode == REPEAT_MODE_OFF) {
             scope.launch(Dispatchers.IO + SilentHandler) {
                 val seedAtRequest =
@@ -2480,145 +2490,145 @@ class MusicService :
             togetherClientEventsJob?.cancel()
             togetherClientEventsJob =
                 ioScope.launch(SilentHandler) {
-                client.events.collect { event ->
-                    when (event) {
-                        is com.arturo254.opentune.together.TogetherClientEvent.Welcome -> {
-                            togetherSelfParticipantId = event.welcome.participantId
-                            scope.launch(SilentHandler) {
-                                val state = togetherSessionState.value
-                                if (state is com.arturo254.opentune.together.TogetherSessionState.Joining) {
-                                    val selfName = displayName.trim().ifBlank { getString(R.string.together_role_guest) }
-                                    val initial =
-                                        com.arturo254.opentune.together.TogetherRoomState(
-                                            sessionId = joinInfo.sessionId,
-                                            hostId = togetherHostId,
-                                            participants =
-                                                listOf(
-                                                    com.arturo254.opentune.together.TogetherParticipant(
-                                                        id = event.welcome.participantId,
-                                                        name = selfName,
-                                                        isHost = false,
-                                                        isPending = event.welcome.isPending,
-                                                        isConnected = true,
-                                                    ),
-                                                ),
-                                            settings = event.welcome.settings,
-                                            queue = emptyList(),
-                                            queueHash = "",
-                                            currentIndex = 0,
-                                            isPlaying = false,
-                                            positionMs = 0L,
-                                            repeatMode = 0,
-                                            shuffleEnabled = false,
-                                            sentAtElapsedRealtimeMs = android.os.SystemClock.elapsedRealtime(),
-                                        )
-                                    togetherSessionState.value =
-                                        com.arturo254.opentune.together.TogetherSessionState.Joined(
-                                            role = com.arturo254.opentune.together.TogetherRole.Guest,
-                                            sessionId = joinInfo.sessionId,
-                                            selfParticipantId = event.welcome.participantId,
-                                            roomState = initial,
-                                        )
-                                }
-                            }
-                            startTogetherHeartbeat(joinInfo.sessionId, client)
-                        }
-
-                        is com.arturo254.opentune.together.TogetherClientEvent.RoomState -> {
-                            applyRemoteRoomState(event.state)
-                        }
-
-                        is com.arturo254.opentune.together.TogetherClientEvent.JoinDecision -> {
-                            if (!event.decision.approved) {
+                    client.events.collect { event ->
+                        when (event) {
+                            is com.arturo254.opentune.together.TogetherClientEvent.Welcome -> {
+                                togetherSelfParticipantId = event.welcome.participantId
                                 scope.launch(SilentHandler) {
-                                    togetherSessionState.value =
-                                        com.arturo254.opentune.together.TogetherSessionState.Error(
-                                            message = getString(R.string.not_allowed),
-                                            recoverable = true,
-                                        )
-                                }
-                                ioScope.launch(SilentHandler) { stopTogetherInternal() }
-                            }
-                        }
-
-                        is com.arturo254.opentune.together.TogetherClientEvent.ServerIssue -> {
-                            Timber.tag("Together").w("server issue (lan) code=${event.code.orEmpty()} message=${event.message}")
-                            when (event.code) {
-                                "GUEST_CONTROL_DISABLED" -> {
-                                    showTogetherNotice(event.message, key = "GUEST_CONTROL_DISABLED")
-                                    val joined =
-                                        togetherSessionState.value as? com.arturo254.opentune.together.TogetherSessionState.Joined
-                                    if (joined?.role is com.arturo254.opentune.together.TogetherRole.Guest) {
-                                        togetherPendingGuestControl = null
-                                        togetherLastSentControlAction = null
-                                        scope.launch(SilentHandler) { applyRemoteRoomState(joined.roomState) }
+                                    val state = togetherSessionState.value
+                                    if (state is com.arturo254.opentune.together.TogetherSessionState.Joining) {
+                                        val selfName = displayName.trim().ifBlank { getString(R.string.together_role_guest) }
+                                        val initial =
+                                            com.arturo254.opentune.together.TogetherRoomState(
+                                                sessionId = joinInfo.sessionId,
+                                                hostId = togetherHostId,
+                                                participants =
+                                                    listOf(
+                                                        com.arturo254.opentune.together.TogetherParticipant(
+                                                            id = event.welcome.participantId,
+                                                            name = selfName,
+                                                            isHost = false,
+                                                            isPending = event.welcome.isPending,
+                                                            isConnected = true,
+                                                        ),
+                                                    ),
+                                                settings = event.welcome.settings,
+                                                queue = emptyList(),
+                                                queueHash = "",
+                                                currentIndex = 0,
+                                                isPlaying = false,
+                                                positionMs = 0L,
+                                                repeatMode = 0,
+                                                shuffleEnabled = false,
+                                                sentAtElapsedRealtimeMs = android.os.SystemClock.elapsedRealtime(),
+                                            )
+                                        togetherSessionState.value =
+                                            com.arturo254.opentune.together.TogetherSessionState.Joined(
+                                                role = com.arturo254.opentune.together.TogetherRole.Guest,
+                                                sessionId = joinInfo.sessionId,
+                                                selfParticipantId = event.welcome.participantId,
+                                                roomState = initial,
+                                            )
                                     }
                                 }
+                                startTogetherHeartbeat(joinInfo.sessionId, client)
+                            }
 
-                                "GUEST_ADD_DISABLED" -> {
-                                    showTogetherNotice(event.message, key = "GUEST_ADD_DISABLED")
-                                }
+                            is com.arturo254.opentune.together.TogetherClientEvent.RoomState -> {
+                                applyRemoteRoomState(event.state)
+                            }
 
-                                "HOST_OFFLINE" -> {
-                                    showTogetherNotice(event.message, key = "HOST_OFFLINE")
-                                }
-
-                                else -> {
+                            is com.arturo254.opentune.together.TogetherClientEvent.JoinDecision -> {
+                                if (!event.decision.approved) {
                                     scope.launch(SilentHandler) {
                                         togetherSessionState.value =
                                             com.arturo254.opentune.together.TogetherSessionState.Error(
-                                                message = event.message,
+                                                message = getString(R.string.not_allowed),
                                                 recoverable = true,
                                             )
                                     }
                                     ioScope.launch(SilentHandler) { stopTogetherInternal() }
                                 }
                             }
-                        }
 
-                        is com.arturo254.opentune.together.TogetherClientEvent.HeartbeatPong -> {
-                            val clock = togetherClock ?: return@collect
-                            clock.onPong(
-                                sentAtElapsedMs = event.pong.clientElapsedRealtimeMs,
-                                receivedAtElapsedMs = event.receivedAtElapsedRealtimeMs,
-                                serverElapsedMs = event.pong.serverElapsedRealtimeMs,
-                            )
-                        }
+                            is com.arturo254.opentune.together.TogetherClientEvent.ServerIssue -> {
+                                Timber.tag("Together").w("server issue (lan) code=${event.code.orEmpty()} message=${event.message}")
+                                when (event.code) {
+                                    "GUEST_CONTROL_DISABLED" -> {
+                                        showTogetherNotice(event.message, key = "GUEST_CONTROL_DISABLED")
+                                        val joined =
+                                            togetherSessionState.value as? com.arturo254.opentune.together.TogetherSessionState.Joined
+                                        if (joined?.role is com.arturo254.opentune.together.TogetherRole.Guest) {
+                                            togetherPendingGuestControl = null
+                                            togetherLastSentControlAction = null
+                                            scope.launch(SilentHandler) { applyRemoteRoomState(joined.roomState) }
+                                        }
+                                    }
 
-                        is com.arturo254.opentune.together.TogetherClientEvent.Error -> {
-                            scope.launch(SilentHandler) {
-                                togetherSessionState.value =
-                                    com.arturo254.opentune.together.TogetherSessionState.Error(
-                                        message = event.message,
-                                        recoverable = true,
-                                    )
+                                    "GUEST_ADD_DISABLED" -> {
+                                        showTogetherNotice(event.message, key = "GUEST_ADD_DISABLED")
+                                    }
+
+                                    "HOST_OFFLINE" -> {
+                                        showTogetherNotice(event.message, key = "HOST_OFFLINE")
+                                    }
+
+                                    else -> {
+                                        scope.launch(SilentHandler) {
+                                            togetherSessionState.value =
+                                                com.arturo254.opentune.together.TogetherSessionState.Error(
+                                                    message = event.message,
+                                                    recoverable = true,
+                                                )
+                                        }
+                                        ioScope.launch(SilentHandler) { stopTogetherInternal() }
+                                    }
+                                }
                             }
-                            ioScope.launch(SilentHandler) { stopTogetherInternal() }
-                        }
 
-                        com.arturo254.opentune.together.TogetherClientEvent.Disconnected -> {
-                            val current = togetherSessionState.value
-                            if (current is com.arturo254.opentune.together.TogetherSessionState.Idle) return@collect
-                            scope.launch(SilentHandler) {
-                                val currentState = togetherSessionState.value
-                                togetherSessionState.value =
-                                    com.arturo254.opentune.together.TogetherSessionState.Error(
-                                        message =
-                                            if (currentState is com.arturo254.opentune.together.TogetherSessionState.Joined &&
-                                                currentState.role is com.arturo254.opentune.together.TogetherRole.Guest
-                                            ) {
-                                                getString(R.string.together_host_left_session)
-                                            } else {
-                                                getString(R.string.network_unavailable)
-                                            },
-                                        recoverable = true,
-                                    )
+                            is com.arturo254.opentune.together.TogetherClientEvent.HeartbeatPong -> {
+                                val clock = togetherClock ?: return@collect
+                                clock.onPong(
+                                    sentAtElapsedMs = event.pong.clientElapsedRealtimeMs,
+                                    receivedAtElapsedMs = event.receivedAtElapsedRealtimeMs,
+                                    serverElapsedMs = event.pong.serverElapsedRealtimeMs,
+                                )
                             }
-                            ioScope.launch(SilentHandler) { stopTogetherInternal() }
+
+                            is com.arturo254.opentune.together.TogetherClientEvent.Error -> {
+                                scope.launch(SilentHandler) {
+                                    togetherSessionState.value =
+                                        com.arturo254.opentune.together.TogetherSessionState.Error(
+                                            message = event.message,
+                                            recoverable = true,
+                                        )
+                                }
+                                ioScope.launch(SilentHandler) { stopTogetherInternal() }
+                            }
+
+                            com.arturo254.opentune.together.TogetherClientEvent.Disconnected -> {
+                                val current = togetherSessionState.value
+                                if (current is com.arturo254.opentune.together.TogetherSessionState.Idle) return@collect
+                                scope.launch(SilentHandler) {
+                                    val currentState = togetherSessionState.value
+                                    togetherSessionState.value =
+                                        com.arturo254.opentune.together.TogetherSessionState.Error(
+                                            message =
+                                                if (currentState is com.arturo254.opentune.together.TogetherSessionState.Joined &&
+                                                    currentState.role is com.arturo254.opentune.together.TogetherRole.Guest
+                                                ) {
+                                                    getString(R.string.together_host_left_session)
+                                                } else {
+                                                    getString(R.string.network_unavailable)
+                                                },
+                                            recoverable = true,
+                                        )
+                                }
+                                ioScope.launch(SilentHandler) { stopTogetherInternal() }
+                            }
                         }
                     }
                 }
-            }
 
             client.connect(joinInfo, displayName.trim().ifBlank { getString(R.string.together_role_guest) })
         }
@@ -3129,8 +3139,8 @@ class MusicService :
             val currentTrackId = state.queue.getOrNull(state.currentIndex.coerceAtLeast(0))?.id
             val mismatch =
                 (pending.desiredIsPlaying != null && state.isPlaying != pending.desiredIsPlaying) ||
-                    (pending.desiredIndex != null && state.currentIndex != pending.desiredIndex) ||
-                    (pending.desiredTrackId != null && currentTrackId != pending.desiredTrackId)
+                        (pending.desiredIndex != null && state.currentIndex != pending.desiredIndex) ||
+                        (pending.desiredTrackId != null && currentTrackId != pending.desiredTrackId)
             if (now >= pending.expiresAtElapsedMs) {
                 if ((pending.desiredIndex != null || pending.desiredTrackId != null) &&
                     now - pending.requestedAtElapsedMs >= 1200L &&
@@ -3167,10 +3177,10 @@ class MusicService :
                 val localHash = if (localIds.isEmpty()) "" else com.arturo254.opentune.utils.md5(localIds.joinToString(separator = "|"))
                 val needsRebuild =
                     desiredItems.isNotEmpty() &&
-                        (
-                            (desiredHash.isNotBlank() && desiredHash != localHash) ||
-                                (desiredHash.isBlank() && desiredIds != localIds)
-                        )
+                            (
+                                    (desiredHash.isNotBlank() && desiredHash != localHash) ||
+                                            (desiredHash.isBlank() && desiredIds != localIds)
+                                    )
 
                 if (desiredItems.isNotEmpty() && needsRebuild) {
                     togetherLastAppliedQueueHash = desiredHash.ifBlank { localHash }
@@ -3195,8 +3205,8 @@ class MusicService :
                     val indexChanged = player.mediaItemCount > 0 && index != player.currentMediaItemIndex
                     val stateChanged =
                         player.repeatMode != state.repeatMode ||
-                            player.shuffleModeEnabled != state.shuffleEnabled ||
-                            player.playWhenReady != state.isPlaying
+                                player.shuffleModeEnabled != state.shuffleEnabled ||
+                                player.playWhenReady != state.isPlaying
 
                     if (indexChanged) {
                         player.seekTo(index.coerceAtMost(player.mediaItemCount - 1), targetPos)
@@ -3217,7 +3227,7 @@ class MusicService :
                         val drift = kotlin.math.abs(player.currentPosition - targetPos)
                         val seekThreshold = if (togetherIsOnlineSession) 4000L else 2000L
                         val threshold = if (state.isPlaying) seekThreshold else 200L
-                        
+
                         if (drift > threshold) {
                             player.seekTo(targetPos)
                             player.prepare()
@@ -3327,30 +3337,30 @@ class MusicService :
     }
 
     fun toggleLike() {
-         database.query {
-             currentSong.value?.let {
-                 val song = it.song.toggleLike()
-                 update(song)
-                 syncUtils.likeSong(song)
+        database.query {
+            currentSong.value?.let {
+                val song = it.song.toggleLike()
+                update(song)
+                syncUtils.likeSong(song)
 
-                 // Check if auto-download on like is enabled and the song is now liked
-                 if (dataStore.get(AutoDownloadOnLikeKey, false) && song.liked) {
-                     // Trigger download for the liked song
-                     val downloadRequest = androidx.media3.exoplayer.offline.DownloadRequest
-                         .Builder(song.id, song.id.toUri())
-                         .setCustomCacheKey(song.id)
-                         .setData(song.title.toByteArray())
-                         .build()
-                     androidx.media3.exoplayer.offline.DownloadService.sendAddDownload(
-                         this@MusicService,
-                         ExoDownloadService::class.java,
-                         downloadRequest,
-                         false
-                     )
-                 }
-             }
-         }
-     }
+                // Check if auto-download on like is enabled and the song is now liked
+                if (dataStore.get(AutoDownloadOnLikeKey, false) && song.liked) {
+                    // Trigger download for the liked song
+                    val downloadRequest = androidx.media3.exoplayer.offline.DownloadRequest
+                        .Builder(song.id, song.id.toUri())
+                        .setCustomCacheKey(song.id)
+                        .setData(song.title.toByteArray())
+                        .build()
+                    androidx.media3.exoplayer.offline.DownloadService.sendAddDownload(
+                        this@MusicService,
+                        ExoDownloadService::class.java,
+                        downloadRequest,
+                        false
+                    )
+                }
+            }
+        }
+    }
 
     fun toggleStartRadio() {
         startRadioSeamlessly()
@@ -3566,297 +3576,297 @@ class MusicService :
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-    super.onMediaItemTransition(mediaItem, reason)
+        super.onMediaItemTransition(mediaItem, reason)
 
-    clearStreamRefreshGuards(
-        mediaItem?.mediaId
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?: player.currentMediaItem?.mediaId
-    )
+        clearStreamRefreshGuards(
+            mediaItem?.mediaId
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: player.currentMediaItem?.mediaId
+        )
 
-    crossfadeAudio?.onMediaItemTransition(mediaItem, reason)
+        crossfadeAudio?.onMediaItemTransition(mediaItem, reason)
 
-    // Pre-load lyrics for upcoming songs in queue
-    val currentIndex = player.currentMediaItemIndex
-    // Convert media items to MediaMetadata for lyrics pre-loading
-    val queue = player.mediaItems.mapNotNull { it.metadata }
-    if (queue.isNotEmpty()) {
-        lyricsPreloadManager?.onSongChanged(currentIndex, queue)
-    }
-
-    val joined = togetherSessionState.value as? com.arturo254.opentune.together.TogetherSessionState.Joined
-    if (joined?.role is com.arturo254.opentune.together.TogetherRole.Guest &&
-        reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
-    ) {
-        if (!joined.roomState.settings.allowGuestsToControlPlayback) {
-            scope.launch(SilentHandler) { applyRemoteRoomState(joined.roomState) }
-            return
+        // Pre-load lyrics for upcoming songs in queue
+        val currentIndex = player.currentMediaItemIndex
+        // Convert media items to MediaMetadata for lyrics pre-loading
+        val queue = player.mediaItems.mapNotNull { it.metadata }
+        if (queue.isNotEmpty()) {
+            lyricsPreloadManager?.onSongChanged(currentIndex, queue)
         }
-        val now = android.os.SystemClock.elapsedRealtime()
-        val index = player.currentMediaItemIndex.coerceAtLeast(0)
-        val isEcho =
-            isTogetherApplyingRemote() ||
-                (now < togetherSuppressEchoUntilElapsedMs && togetherLastRemoteAppliedIndex == index)
-        if (!isEcho) {
-            val trackId = (mediaItem?.metadata ?: player.currentMetadata)?.id?.trim().orEmpty()
-            requestTogetherControl(
-                if (trackId.isBlank()) {
-                    com.arturo254.opentune.together.ControlAction.SeekToIndex(
-                        index = index,
-                        positionMs = player.currentPosition.coerceAtLeast(0L),
-                    )
-                } else {
-                    com.arturo254.opentune.together.ControlAction.SeekToTrack(
-                        trackId = trackId,
-                        positionMs = player.currentPosition.coerceAtLeast(0L),
-                    )
-                },
-            )
-        }
-    }
 
-    val timelineEmpty = player.currentTimeline.isEmpty || player.mediaItemCount == 0 || player.currentMediaItem == null
-    currentMediaMetadata.value = if (timelineEmpty) null else (mediaItem?.metadata ?: player.currentMetadata)
-
-    scrobbleManager?.onSongStop()
-
-    if (!timelineEmpty &&
-        dataStore.get(AutoLoadMoreKey, true) &&
-        reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
-        player.repeatMode == REPEAT_MODE_OFF
-    ) {
-        val isNearEndWithoutPaging =
-            player.mediaItemCount - player.currentMediaItemIndex <= 3 && !currentQueue.hasNextPage()
-
-        if (!isNearEndWithoutPaging) {
-            val force =
-                reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK ||
-                    reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED
-
-            val currentId = (mediaItem?.metadata ?: player.currentMetadata)?.id?.trim().orEmpty()
-            if (force || (currentId.isNotBlank() && automixSeedMediaId != currentId)) {
-                refreshAutomixForCurrentMedia(force = force)
+        val joined = togetherSessionState.value as? com.arturo254.opentune.together.TogetherSessionState.Joined
+        if (joined?.role is com.arturo254.opentune.together.TogetherRole.Guest &&
+            reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK
+        ) {
+            if (!joined.roomState.settings.allowGuestsToControlPlayback) {
+                scope.launch(SilentHandler) { applyRemoteRoomState(joined.roomState) }
+                return
+            }
+            val now = android.os.SystemClock.elapsedRealtime()
+            val index = player.currentMediaItemIndex.coerceAtLeast(0)
+            val isEcho =
+                isTogetherApplyingRemote() ||
+                        (now < togetherSuppressEchoUntilElapsedMs && togetherLastRemoteAppliedIndex == index)
+            if (!isEcho) {
+                val trackId = (mediaItem?.metadata ?: player.currentMetadata)?.id?.trim().orEmpty()
+                requestTogetherControl(
+                    if (trackId.isBlank()) {
+                        com.arturo254.opentune.together.ControlAction.SeekToIndex(
+                            index = index,
+                            positionMs = player.currentPosition.coerceAtLeast(0L),
+                        )
+                    } else {
+                        com.arturo254.opentune.together.ControlAction.SeekToTrack(
+                            trackId = trackId,
+                            positionMs = player.currentPosition.coerceAtLeast(0L),
+                        )
+                    },
+                )
             }
         }
-    }
 
-    // Auto-load more from queue if available
-    if (!suppressAutoPlayback &&
-        !timelineEmpty &&
-        dataStore.get(AutoLoadMoreKey, true) &&
-        reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
-        player.mediaItemCount - player.currentMediaItemIndex <= 5 &&
-        currentQueue.hasNextPage() &&
-        player.repeatMode == REPEAT_MODE_OFF
-    ) {
-        scope.launch(SilentHandler) {
-            val mediaItems =
-                currentQueue.nextPage().filterExplicit(dataStore.get(HideExplicitKey, false)).filterVideo(dataStore.get(HideVideoKey, false))
-            if (player.playbackState != STATE_IDLE) {
-                player.addMediaItems(mediaItems.drop(1))
-            } else {
-                scope.launch { discordRpc?.stopActivity() }
+        val timelineEmpty = player.currentTimeline.isEmpty || player.mediaItemCount == 0 || player.currentMediaItem == null
+        currentMediaMetadata.value = if (timelineEmpty) null else (mediaItem?.metadata ?: player.currentMetadata)
+
+        scrobbleManager?.onSongStop()
+
+        if (!timelineEmpty &&
+            dataStore.get(AutoLoadMoreKey, true) &&
+            reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
+            player.repeatMode == REPEAT_MODE_OFF
+        ) {
+            val isNearEndWithoutPaging =
+                player.mediaItemCount - player.currentMediaItemIndex <= 3 && !currentQueue.hasNextPage()
+
+            if (!isNearEndWithoutPaging) {
+                val force =
+                    reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK ||
+                            reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED
+
+                val currentId = (mediaItem?.metadata ?: player.currentMetadata)?.id?.trim().orEmpty()
+                if (force || (currentId.isNotBlank() && automixSeedMediaId != currentId)) {
+                    refreshAutomixForCurrentMedia(force = force)
+                }
             }
         }
-    }
-    
-    if (!suppressAutoPlayback &&
-        !timelineEmpty &&
-        dataStore.get(AutoLoadMoreKey, true) &&
-        reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
-        player.repeatMode == REPEAT_MODE_OFF &&
-        player.mediaItemCount - player.currentMediaItemIndex <= 3 &&
-        !currentQueue.hasNextPage()
-    ) {
-        scope.launch(SilentHandler) {
-            if (suppressAutoPlayback || player.mediaItemCount == 0) return@launch
-            val queueIds = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }.toSet()
-            val currentMediaMetadata = player.currentMetadata
-            val currentMediaId = currentMediaMetadata?.id?.trim().orEmpty()
-            val existingSeed = automixSeedMediaId?.trim().orEmpty()
-            val existingAutomix =
-                if (currentMediaId.isNotBlank() && existingSeed == currentMediaId) {
-                    automixItems.value
+
+        // Auto-load more from queue if available
+        if (!suppressAutoPlayback &&
+            !timelineEmpty &&
+            dataStore.get(AutoLoadMoreKey, true) &&
+            reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
+            player.mediaItemCount - player.currentMediaItemIndex <= 5 &&
+            currentQueue.hasNextPage() &&
+            player.repeatMode == REPEAT_MODE_OFF
+        ) {
+            scope.launch(SilentHandler) {
+                val mediaItems =
+                    currentQueue.nextPage().filterExplicit(dataStore.get(HideExplicitKey, false)).filterVideo(dataStore.get(HideVideoKey, false))
+                if (player.playbackState != STATE_IDLE) {
+                    player.addMediaItems(mediaItems.drop(1))
                 } else {
-                    if (automixItems.value.isNotEmpty()) {
-                        clearAutomix()
+                    scope.launch { discordRpc?.stopActivity() }
+                }
+            }
+        }
+
+        if (!suppressAutoPlayback &&
+            !timelineEmpty &&
+            dataStore.get(AutoLoadMoreKey, true) &&
+            reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
+            player.repeatMode == REPEAT_MODE_OFF &&
+            player.mediaItemCount - player.currentMediaItemIndex <= 3 &&
+            !currentQueue.hasNextPage()
+        ) {
+            scope.launch(SilentHandler) {
+                if (suppressAutoPlayback || player.mediaItemCount == 0) return@launch
+                val queueIds = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }.toSet()
+                val currentMediaMetadata = player.currentMetadata
+                val currentMediaId = currentMediaMetadata?.id?.trim().orEmpty()
+                val existingSeed = automixSeedMediaId?.trim().orEmpty()
+                val existingAutomix =
+                    if (currentMediaId.isNotBlank() && existingSeed == currentMediaId) {
+                        automixItems.value
+                    } else {
+                        if (automixItems.value.isNotEmpty()) {
+                            clearAutomix()
+                        }
+                        emptyList()
                     }
-                    emptyList()
-                }
-            if (existingAutomix.isNotEmpty()) {
-                if (player.playbackState == STATE_IDLE) return@launch
-                val filteredAutomix = existingAutomix.filter { it.mediaId !in queueIds }
-                if (filteredAutomix.isNotEmpty()) {
-                    player.addMediaItems(filteredAutomix)
-                    filteredAutomix.forEach { autoAddedMediaIds.add(it.mediaId) }
-                }
-                clearAutomix()
-            } else {
-                if (currentMediaMetadata != null) {
-                    refreshAutomixForCurrentMedia(force = true)
+                if (existingAutomix.isNotEmpty()) {
+                    if (player.playbackState == STATE_IDLE) return@launch
+                    val filteredAutomix = existingAutomix.filter { it.mediaId !in queueIds }
+                    if (filteredAutomix.isNotEmpty()) {
+                        player.addMediaItems(filteredAutomix)
+                        filteredAutomix.forEach { autoAddedMediaIds.add(it.mediaId) }
+                    }
+                    clearAutomix()
+                } else {
+                    if (currentMediaMetadata != null) {
+                        refreshAutomixForCurrentMedia(force = true)
+                    }
                 }
             }
         }
-    }
 
-    if (player.playWhenReady && player.playbackState == Player.STATE_READY) {
-        scrobbleManager?.onSongStart(player.currentMetadata, duration = player.duration)
-    }
-
-    scope.launch {
-        val shouldSave = withContext(Dispatchers.IO) { dataStore.get(PersistentQueueKey, true) }
-        if (shouldSave) {
-            saveQueueToDisk()
+        if (player.playWhenReady && player.playbackState == Player.STATE_READY) {
+            scrobbleManager?.onSongStart(player.currentMetadata, duration = player.duration)
         }
-    }
-    ensurePresenceManager()
+
+        scope.launch {
+            val shouldSave = withContext(Dispatchers.IO) { dataStore.get(PersistentQueueKey, true) }
+            if (shouldSave) {
+                saveQueueToDisk()
+            }
+        }
+        ensurePresenceManager()
         updatePlayerWidgets()
-}
+    }
 
     override fun onPlaybackStateChanged(@Player.State playbackState: Int) {
-    super.onPlaybackStateChanged(playbackState)
+        super.onPlaybackStateChanged(playbackState)
         updatePlayerWidgets()
 
-    val activeMediaId = player.currentMediaItem?.mediaId
-    clearStreamRefreshGuards(activeMediaId)
-    if (
-        playbackState == Player.STATE_READY &&
-        player.playWhenReady &&
-        player.isPlaying &&
-        activeMediaId != null &&
-        pendingStreamRefreshValidationMediaId == activeMediaId
-    ) {
-        refreshValidatedPlayingMediaId = activeMediaId
-        pendingStreamRefreshValidationMediaId = null
-        streamRecoveryState.remove(activeMediaId)
-        Timber.tag("MusicService").i("Stream refresh validated and playback resumed for $activeMediaId")
-    }
-
-    scope.launch {
-        val shouldSave = withContext(Dispatchers.IO) { dataStore.get(PersistentQueueKey, true) }
-        if (shouldSave) {
-            saveQueueToDisk()
+        val activeMediaId = player.currentMediaItem?.mediaId
+        clearStreamRefreshGuards(activeMediaId)
+        if (
+            playbackState == Player.STATE_READY &&
+            player.playWhenReady &&
+            player.isPlaying &&
+            activeMediaId != null &&
+            pendingStreamRefreshValidationMediaId == activeMediaId
+        ) {
+            refreshValidatedPlayingMediaId = activeMediaId
+            pendingStreamRefreshValidationMediaId = null
+            streamRecoveryState.remove(activeMediaId)
+            Timber.tag("MusicService").i("Stream refresh validated and playback resumed for $activeMediaId")
         }
-    }
 
-    if (playbackState == Player.STATE_IDLE || playbackState == Player.STATE_ENDED) {
-        crossfadeAudio?.stop(resetMainFade = true)
-        scrobbleManager?.onSongStop()
-    }
-    
-    // Auto-start recommendations when playback ends
-    if (!suppressAutoPlayback &&
-        playbackState == Player.STATE_ENDED &&
-        dataStore.get(AutoLoadMoreKey, true) &&
-        player.repeatMode == REPEAT_MODE_OFF &&
-        player.currentMediaItem != null
-    ) {
-        scope.launch(SilentHandler) {
-            if (suppressAutoPlayback || player.playbackState == STATE_IDLE || player.mediaItemCount == 0) return@launch
-            val lastMediaMetadata = player.currentMetadata
-            val existingAutomix = automixItems.value
-            if (existingAutomix.isNotEmpty()) {
-                val filteredAutomix = existingAutomix.filter { it.mediaId != lastMediaMetadata?.id }
-                if (filteredAutomix.isNotEmpty()) {
-                    autoAddedMediaIds.clear()
-                    player.setMediaItems(filteredAutomix, 0, 0)
-                    player.prepare()
-                    player.play()
-                    filteredAutomix.forEach { autoAddedMediaIds.add(it.mediaId) }
-                }
-                clearAutomix()
-            } else {
-                if (lastMediaMetadata != null) {
-                    withContext(Dispatchers.IO) {
-                        YouTube.next(WatchEndpoint(videoId = lastMediaMetadata.id))
-                    }.onSuccess { nextResult ->
-                        if (suppressAutoPlayback || player.playbackState == STATE_IDLE || player.mediaItemCount == 0) return@onSuccess
-                        val hideExplicit = dataStore.get(HideExplicitKey, false)
-                        val hideVideo = dataStore.get(HideVideoKey, false)
-                        val radioItems = nextResult.items
-                            .map { it.toMediaItem() }
-                            .filter { it.mediaId != lastMediaMetadata.id }
-                            .filterExplicit(hideExplicit)
-                            .filterVideo(hideVideo)
+        scope.launch {
+            val shouldSave = withContext(Dispatchers.IO) { dataStore.get(PersistentQueueKey, true) }
+            if (shouldSave) {
+                saveQueueToDisk()
+            }
+        }
 
-                        if (radioItems.isNotEmpty()) {
-                            autoAddedMediaIds.clear()
-                            player.setMediaItems(radioItems, 0, 0)
-                            player.prepare()
-                            player.play()
-                            radioItems.forEach { autoAddedMediaIds.add(it.mediaId) }
+        if (playbackState == Player.STATE_IDLE || playbackState == Player.STATE_ENDED) {
+            crossfadeAudio?.stop(resetMainFade = true)
+            scrobbleManager?.onSongStop()
+        }
 
-                            withContext(Dispatchers.IO) {
-                                YouTube.next(WatchEndpoint(playlistId = nextResult.endpoint.playlistId))
-                            }.onSuccess { automixResult ->
-                                if (suppressAutoPlayback || player.playbackState == STATE_IDLE) return@onSuccess
-                                automixItems.value = automixResult.items
-                                    .map { it.toMediaItem() }
-                                    .filter { it.mediaId != lastMediaMetadata.id }
-                                    .filterExplicit(hideExplicit)
-                                    .filterVideo(hideVideo)
+        // Auto-start recommendations when playback ends
+        if (!suppressAutoPlayback &&
+            playbackState == Player.STATE_ENDED &&
+            dataStore.get(AutoLoadMoreKey, true) &&
+            player.repeatMode == REPEAT_MODE_OFF &&
+            player.currentMediaItem != null
+        ) {
+            scope.launch(SilentHandler) {
+                if (suppressAutoPlayback || player.playbackState == STATE_IDLE || player.mediaItemCount == 0) return@launch
+                val lastMediaMetadata = player.currentMetadata
+                val existingAutomix = automixItems.value
+                if (existingAutomix.isNotEmpty()) {
+                    val filteredAutomix = existingAutomix.filter { it.mediaId != lastMediaMetadata?.id }
+                    if (filteredAutomix.isNotEmpty()) {
+                        autoAddedMediaIds.clear()
+                        player.setMediaItems(filteredAutomix, 0, 0)
+                        player.prepare()
+                        player.play()
+                        filteredAutomix.forEach { autoAddedMediaIds.add(it.mediaId) }
+                    }
+                    clearAutomix()
+                } else {
+                    if (lastMediaMetadata != null) {
+                        withContext(Dispatchers.IO) {
+                            YouTube.next(WatchEndpoint(videoId = lastMediaMetadata.id))
+                        }.onSuccess { nextResult ->
+                            if (suppressAutoPlayback || player.playbackState == STATE_IDLE || player.mediaItemCount == 0) return@onSuccess
+                            val hideExplicit = dataStore.get(HideExplicitKey, false)
+                            val hideVideo = dataStore.get(HideVideoKey, false)
+                            val radioItems = nextResult.items
+                                .map { it.toMediaItem() }
+                                .filter { it.mediaId != lastMediaMetadata.id }
+                                .filterExplicit(hideExplicit)
+                                .filterVideo(hideVideo)
+
+                            if (radioItems.isNotEmpty()) {
+                                autoAddedMediaIds.clear()
+                                player.setMediaItems(radioItems, 0, 0)
+                                player.prepare()
+                                player.play()
+                                radioItems.forEach { autoAddedMediaIds.add(it.mediaId) }
+
+                                withContext(Dispatchers.IO) {
+                                    YouTube.next(WatchEndpoint(playlistId = nextResult.endpoint.playlistId))
+                                }.onSuccess { automixResult ->
+                                    if (suppressAutoPlayback || player.playbackState == STATE_IDLE) return@onSuccess
+                                    automixItems.value = automixResult.items
+                                        .map { it.toMediaItem() }
+                                        .filter { it.mediaId != lastMediaMetadata.id }
+                                        .filterExplicit(hideExplicit)
+                                        .filterVideo(hideVideo)
+                                }
                             }
                         }
                     }
                 }
             }
         }
-    }
 
-    ensurePresenceManager()
-    scope.launch {
-        try {
-            val token = withContext(Dispatchers.IO) { dataStore.get(DiscordTokenKey, "") }
-            if (token.isNotBlank() && DiscordPresenceManager.isRunning()) {
-                // Obtain the freshest Song from DB using current media item id to avoid stale currentSong.value
-                val mediaId = player.currentMediaItem?.mediaId
-                val song = if (mediaId != null) withContext(Dispatchers.IO) { database.song(mediaId).first() } else null
-                val finalSong = song ?: player.currentMetadata?.let { createTransientSongFromMedia(it) }
+        ensurePresenceManager()
+        scope.launch {
+            try {
+                val token = withContext(Dispatchers.IO) { dataStore.get(DiscordTokenKey, "") }
+                if (token.isNotBlank() && DiscordPresenceManager.isRunning()) {
+                    // Obtain the freshest Song from DB using current media item id to avoid stale currentSong.value
+                    val mediaId = player.currentMediaItem?.mediaId
+                    val song = if (mediaId != null) withContext(Dispatchers.IO) { database.song(mediaId).first() } else null
+                    val finalSong = song ?: player.currentMetadata?.let { createTransientSongFromMedia(it) }
 
-                if (canUpdatePresence()) {
-                    val success = withContext(Dispatchers.IO) {
-                        DiscordPresenceManager.updateNow(
-                            context = this@MusicService,
-                            token = token,
-                            song = finalSong,
-                            positionMs = player.currentPosition,
-                            isPaused = !player.playWhenReady,
-                        )
-                    }
-                    if (!success) {
-                        Timber.tag("MusicService").w("immediate presence update returned false — attempting restart")
-                        if (DiscordPresenceManager.isRunning()) {
-                            try {
-                                if (DiscordPresenceManager.restart()) {
-                                    Timber.tag("MusicService").d("presence manager restarted after failed update")
-                                }
-                            } catch (ex: Exception) {
-                                Timber.tag("MusicService").e(ex, "restart after failed presence update threw")
-                            }
+                    if (canUpdatePresence()) {
+                        val success = withContext(Dispatchers.IO) {
+                            DiscordPresenceManager.updateNow(
+                                context = this@MusicService,
+                                token = token,
+                                song = finalSong,
+                                positionMs = player.currentPosition,
+                                isPaused = !player.playWhenReady,
+                            )
                         }
-                    }
-
-                    try {
-                        val lbEnabled = withContext(Dispatchers.IO) { dataStore.get(ListenBrainzEnabledKey, false) }
-                        val lbToken = withContext(Dispatchers.IO) { dataStore.get(ListenBrainzTokenKey, "") }
-                        if (lbEnabled && !lbToken.isNullOrBlank()) {
-                            scope.launch(Dispatchers.IO) {
+                        if (!success) {
+                            Timber.tag("MusicService").w("immediate presence update returned false — attempting restart")
+                            if (DiscordPresenceManager.isRunning()) {
                                 try {
-                                    ListenBrainzManager.submitPlayingNow(this@MusicService, lbToken, finalSong, player.currentPosition)
-                                } catch (ie: Exception) {
-                                    Timber.tag("MusicService").v(ie, "ListenBrainz playing_now submit failed")
+                                    if (DiscordPresenceManager.restart()) {
+                                        Timber.tag("MusicService").d("presence manager restarted after failed update")
+                                    }
+                                } catch (ex: Exception) {
+                                    Timber.tag("MusicService").e(ex, "restart after failed presence update threw")
                                 }
                             }
                         }
-                    } catch (_: Exception) {}
+
+                        try {
+                            val lbEnabled = withContext(Dispatchers.IO) { dataStore.get(ListenBrainzEnabledKey, false) }
+                            val lbToken = withContext(Dispatchers.IO) { dataStore.get(ListenBrainzTokenKey, "") }
+                            if (lbEnabled && !lbToken.isNullOrBlank()) {
+                                scope.launch(Dispatchers.IO) {
+                                    try {
+                                        ListenBrainzManager.submitPlayingNow(this@MusicService, lbToken, finalSong, player.currentPosition)
+                                    } catch (ie: Exception) {
+                                        Timber.tag("MusicService").v(ie, "ListenBrainz playing_now submit failed")
+                                    }
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
                 }
+            } catch (e: Exception) {
+                Timber.tag("MusicService").v(e, "immediate presence update failed")
             }
-        } catch (e: Exception) {
-            Timber.tag("MusicService").v(e, "immediate presence update failed")
         }
     }
-}
 
 
     override fun onEvents(player: Player, events: Player.Events) {
@@ -3865,90 +3875,90 @@ class MusicService :
                 currentMediaMetadata.value = player.currentMetadata
             }
         }
-    val joined = togetherSessionState.value as? com.arturo254.opentune.together.TogetherSessionState.Joined
-    if (joined?.role is com.arturo254.opentune.together.TogetherRole.Guest &&
-        events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED)
-    ) {
-        if (!joined.roomState.settings.allowGuestsToControlPlayback) {
-            scope.launch(SilentHandler) { applyRemoteRoomState(joined.roomState) }
-        } else {
-            val now = android.os.SystemClock.elapsedRealtime()
-            val playWhenReady = this.player.playWhenReady
-            val isEcho =
-                isTogetherApplyingRemote() ||
-                    (now < togetherSuppressEchoUntilElapsedMs &&
-                        togetherLastRemoteAppliedPlayWhenReady != null &&
-                        togetherLastRemoteAppliedPlayWhenReady == playWhenReady)
-            if (!isEcho) {
-                val action =
-                    if (playWhenReady) {
-                        com.arturo254.opentune.together.ControlAction.Play
-                    } else {
-                        com.arturo254.opentune.together.ControlAction.Pause
-                    }
-                requestTogetherControl(action)
+        val joined = togetherSessionState.value as? com.arturo254.opentune.together.TogetherSessionState.Joined
+        if (joined?.role is com.arturo254.opentune.together.TogetherRole.Guest &&
+            events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED)
+        ) {
+            if (!joined.roomState.settings.allowGuestsToControlPlayback) {
+                scope.launch(SilentHandler) { applyRemoteRoomState(joined.roomState) }
+            } else {
+                val now = android.os.SystemClock.elapsedRealtime()
+                val playWhenReady = this.player.playWhenReady
+                val isEcho =
+                    isTogetherApplyingRemote() ||
+                            (now < togetherSuppressEchoUntilElapsedMs &&
+                                    togetherLastRemoteAppliedPlayWhenReady != null &&
+                                    togetherLastRemoteAppliedPlayWhenReady == playWhenReady)
+                if (!isEcho) {
+                    val action =
+                        if (playWhenReady) {
+                            com.arturo254.opentune.together.ControlAction.Play
+                        } else {
+                            com.arturo254.opentune.together.ControlAction.Pause
+                        }
+                    requestTogetherControl(action)
+                }
             }
         }
-    }
-    if (events.contains(Player.EVENT_DEVICE_VOLUME_CHANGED)) {
-        handleDeviceMuteStateChanged()
-    }
-    if (events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED) && isDeviceMutedNow() && this.player.playWhenReady) {
-        handleDeviceMuteStateChanged()
-    }
-    if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) &&
-        (this.player.playbackState == Player.STATE_IDLE || this.player.playbackState == Player.STATE_ENDED)
-    ) {
-        wasAutoPausedByDeviceMute = false
-    }
-    if (events.contains(Player.EVENT_AUDIO_SESSION_ID)) {
-        val newSessionId = this.player.audioSessionId
-        val oldSessionId = openedAudioSessionId
-        if (isAudioEffectSessionOpened && newSessionId > 0 && oldSessionId != null && oldSessionId > 0 && oldSessionId != newSessionId) {
-            sendBroadcast(
-                Intent(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION).apply {
-                    putExtra(AudioEffect.EXTRA_AUDIO_SESSION, oldSessionId)
-                    putExtra(AudioEffect.EXTRA_PACKAGE_NAME, packageName)
-                },
+        if (events.contains(Player.EVENT_DEVICE_VOLUME_CHANGED)) {
+            handleDeviceMuteStateChanged()
+        }
+        if (events.contains(Player.EVENT_PLAY_WHEN_READY_CHANGED) && isDeviceMutedNow() && this.player.playWhenReady) {
+            handleDeviceMuteStateChanged()
+        }
+        if (events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED) &&
+            (this.player.playbackState == Player.STATE_IDLE || this.player.playbackState == Player.STATE_ENDED)
+        ) {
+            wasAutoPausedByDeviceMute = false
+        }
+        if (events.contains(Player.EVENT_AUDIO_SESSION_ID)) {
+            val newSessionId = this.player.audioSessionId
+            val oldSessionId = openedAudioSessionId
+            if (isAudioEffectSessionOpened && newSessionId > 0 && oldSessionId != null && oldSessionId > 0 && oldSessionId != newSessionId) {
+                sendBroadcast(
+                    Intent(AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION).apply {
+                        putExtra(AudioEffect.EXTRA_AUDIO_SESSION, oldSessionId)
+                        putExtra(AudioEffect.EXTRA_PACKAGE_NAME, packageName)
+                    },
+                )
+                openedAudioSessionId = newSessionId
+                ensureAudioEffects(newSessionId)
+                sendBroadcast(
+                    Intent(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION).apply {
+                        putExtra(AudioEffect.EXTRA_AUDIO_SESSION, newSessionId)
+                        putExtra(AudioEffect.EXTRA_PACKAGE_NAME, packageName)
+                        putExtra(AudioEffect.EXTRA_CONTENT_TYPE, AudioEffect.CONTENT_TYPE_MUSIC)
+                    },
+                )
+            }
+        }
+        if (events.containsAny(
+                Player.EVENT_PLAYBACK_STATE_CHANGED,
+                Player.EVENT_PLAY_WHEN_READY_CHANGED
             )
-            openedAudioSessionId = newSessionId
-            ensureAudioEffects(newSessionId)
-            sendBroadcast(
-                Intent(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION).apply {
-                    putExtra(AudioEffect.EXTRA_AUDIO_SESSION, newSessionId)
-                    putExtra(AudioEffect.EXTRA_PACKAGE_NAME, packageName)
-                    putExtra(AudioEffect.EXTRA_CONTENT_TYPE, AudioEffect.CONTENT_TYPE_MUSIC)
-                },
-            )
+        ) {
+            val playbackState = player.playbackState
+            val keepAudioEffectSessionOpen =
+                playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_READY
+            if (player.playWhenReady && keepAudioEffectSessionOpen) {
+                requestAudioFocus()
+            }
+            if (keepAudioEffectSessionOpen) {
+                openAudioEffectSession()
+            } else {
+                closeAudioEffectSession()
+            }
+            updateWakeLock()
+            if (player.playWhenReady && keepAudioEffectSessionOpen) {
+                cancelIdleStop()
+                promoteToStartedService()
+                ensureStartedAsForeground()
+            } else {
+                scheduleStopIfIdle()
+            }
         }
-    }
-    if (events.containsAny(
-            Player.EVENT_PLAYBACK_STATE_CHANGED,
-            Player.EVENT_PLAY_WHEN_READY_CHANGED
-        )
-    ) {
-        val playbackState = player.playbackState
-        val keepAudioEffectSessionOpen =
-            playbackState == Player.STATE_BUFFERING || playbackState == Player.STATE_READY
-        if (player.playWhenReady && keepAudioEffectSessionOpen) {
-            requestAudioFocus()
-        }
-        if (keepAudioEffectSessionOpen) {
-            openAudioEffectSession()
-        } else {
-            closeAudioEffectSession()
-        }
-        updateWakeLock()
-        if (player.playWhenReady && keepAudioEffectSessionOpen) {
-            cancelIdleStop()
-            promoteToStartedService()
-            ensureStartedAsForeground()
-        } else {
-            scheduleStopIfIdle()
-        }
-    }
 
-       if (events.containsAny(EVENT_TIMELINE_CHANGED, EVENT_POSITION_DISCONTINUITY)) {
+        if (events.containsAny(EVENT_TIMELINE_CHANGED, EVENT_POSITION_DISCONTINUITY)) {
             if (crossfadeAudio?.isCrossfading() != true) {
                 currentMediaMetadata.value = player.currentMetadata
             }
@@ -3985,7 +3995,7 @@ class MusicService :
                                         }
                                     }
                                 }
-                                
+
                                 // Last.fm now playing - handled by ScrobbleManager
                             } catch (_: Exception) {}
                         }
@@ -4044,7 +4054,7 @@ class MusicService :
                                         }
                                     }
                                 }
-                                
+
                                 // Last.fm now playing - handled by ScrobbleManager
                             } catch (_: Exception) {}
                         }
@@ -4055,18 +4065,18 @@ class MusicService :
             }
         }
 
-   if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED)) {
-        ensurePresenceManager()
-        // Scrobble: Track play/pause state
-        scrobbleManager?.onPlayerStateChanged(player.isPlaying, player.currentMetadata, duration = player.duration)
-       updatePlayerWidgets()
-    } else if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
-        ensurePresenceManager()
-       updatePlayerWidgets()
-    } else {
-        ensurePresenceManager()
+        if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED)) {
+            ensurePresenceManager()
+            // Scrobble: Track play/pause state
+            scrobbleManager?.onPlayerStateChanged(player.isPlaying, player.currentMetadata, duration = player.duration)
+            updatePlayerWidgets()
+        } else if (events.contains(Player.EVENT_MEDIA_ITEM_TRANSITION)) {
+            ensurePresenceManager()
+            updatePlayerWidgets()
+        } else {
+            ensurePresenceManager()
+        }
     }
-  }
 
 
     override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
@@ -4089,7 +4099,7 @@ class MusicService :
         if (shuffleModeEnabled) {
             applyCurrentFirstShuffleOrder()
         }
-        
+
         // Save state when shuffle mode changes - must be on Main thread to access player
         scope.launch {
             if (dataStore.get(PersistentQueueKey, true)) {
@@ -4120,7 +4130,7 @@ class MusicService :
                 settings[RepeatModeKey] = repeatMode
             }
         }
-        
+
         // Save state when repeat mode changes - must be on Main thread to access player
         scope.launch {
             if (dataStore.get(PersistentQueueKey, true)) {
@@ -4158,11 +4168,11 @@ class MusicService :
 
         val shouldAttemptStreamRefresh =
             currentMediaId != null && (
-                error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
-                    error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ||
-                    error.errorCode == PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE ||
-                    httpStatusCode in setOf(403, 404, 410, 416, 429, 500, 502, 503)
-                )
+                    error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
+                            error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND ||
+                            error.errorCode == PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE ||
+                            httpStatusCode in setOf(403, 404, 410, 416, 429, 500, 502, 503)
+                    )
 
         if (currentMediaId != null && error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND) {
             scope.launch(Dispatchers.IO) {
@@ -4205,8 +4215,8 @@ class MusicService :
         val skipSilenceCurrentlyEnabled = dataStore.get(SkipSilenceKey, false)
         val causeText = (error.cause?.stackTraceToString() ?: error.stackTraceToString()).lowercase()
         val looksLikeSilenceProcessor = skipSilenceCurrentlyEnabled && (
-            "silenceskippingaudioprocessor" in causeText || "silence" in causeText
-        )
+                "silenceskippingaudioprocessor" in causeText || "silence" in causeText
+                )
 
         if (looksLikeSilenceProcessor) {
             scope.launch {
@@ -4343,13 +4353,15 @@ class MusicService :
             // Intentar obtener playback data de YouTube (fuente primaria)
             try {
                 val playbackData = runBlocking(Dispatchers.IO) {
-                    YTPlayerUtils.playerResponseForPlayback(
-                        mediaId,
-                        audioQuality = audioQuality,
-                        connectivityManager = connectivityManager,
-                        preferredStreamClient = preferredStreamClient,
-                        avoidCodecs = avoidStreamCodecs,
-                    )
+                    withTimeout(PLAYBACK_RESOLUTION_TIMEOUT_MS) {
+                        YTPlayerUtils.playerResponseForPlayback(
+                            mediaId,
+                            audioQuality = audioQuality,
+                            connectivityManager = connectivityManager,
+                            preferredStreamClient = preferredStreamClient,
+                            avoidCodecs = avoidStreamCodecs,
+                        )
+                    }
                 }.getOrElse { throwable ->
                     when (throwable) {
                         is YTPlayerUtils.LoginRequiredForPlaybackException -> {
@@ -4663,9 +4675,9 @@ class MusicService :
         val mediaItem = eventTime.timeline.getWindow(eventTime.windowIndex, Timeline.Window()).mediaItem
 
         if (playbackStats.totalPlayTimeMs >= (
-                dataStore[HistoryDuration]?.times(1000f)
-                    ?: 30000f
-            ) &&
+                    dataStore[HistoryDuration]?.times(1000f)
+                        ?: 30000f
+                    ) &&
             !dataStore.get(PauseListenHistoryKey, false)
         ) {
             database.query {
@@ -4732,10 +4744,10 @@ class MusicService :
                 ?: return
 
         for (
-            trackingUrl in listOfNotNull(
-                playbackTracking.videostatsPlaybackUrl?.baseUrl,
-                playbackTracking.videostatsWatchtimeUrl?.baseUrl,
-            )
+        trackingUrl in listOfNotNull(
+            playbackTracking.videostatsPlaybackUrl?.baseUrl,
+            playbackTracking.videostatsWatchtimeUrl?.baseUrl,
+        )
         ) {
             if (trackingUrl.isBlank() || trackingUrl in attemptedUrls) continue
             registerTrackingUrl(trackingUrl)
@@ -4896,7 +4908,7 @@ class MusicService :
                 mediaItemIndex = currentMediaItemIndex,
                 position = currentPosition
             )
-            
+
             val persistAutomix =
                 PersistQueue(
                     title = "automix",
@@ -4904,7 +4916,7 @@ class MusicService :
                     mediaItemIndex = 0,
                     position = 0,
                 )
-                
+
             // Save player state
             val persistPlayerState = PersistPlayerState(
                 playWhenReady = playWhenReady,
@@ -4915,7 +4927,7 @@ class MusicService :
                 currentMediaItemIndex = currentMediaItemIndex, // Redundant but part of data class
                 playbackState = playbackState
             )
-            
+
             writePersistentObject(PERSISTENT_QUEUE_FILE, persistQueue)
             writePersistentObject(PERSISTENT_AUTOMIX_FILE, persistAutomix)
             writePersistentObject(PERSISTENT_PLAYER_STATE_FILE, persistPlayerState)
@@ -5051,9 +5063,9 @@ class MusicService :
             val state = togetherSessionState.value
             val isHostSessionActive =
                 state is com.arturo254.opentune.together.TogetherSessionState.Hosting ||
-                    state is com.arturo254.opentune.together.TogetherSessionState.HostingOnline ||
-                    (state is com.arturo254.opentune.together.TogetherSessionState.Joined &&
-                        state.role is com.arturo254.opentune.together.TogetherRole.Host)
+                        state is com.arturo254.opentune.together.TogetherSessionState.HostingOnline ||
+                        (state is com.arturo254.opentune.together.TogetherSessionState.Joined &&
+                                state.role is com.arturo254.opentune.together.TogetherRole.Host)
 
             val isPlaybackInactive = player.playbackState == Player.STATE_IDLE || player.mediaItemCount == 0
 
@@ -5174,5 +5186,6 @@ class MusicService :
         const val PERSISTENT_PLAYER_STATE_FILE = "persistent_player_state.data"
         const val MAX_CONSECUTIVE_ERR = 5
         const val MIN_PRESENCE_UPDATE_INTERVAL = 20_000L
+        const val PLAYBACK_RESOLUTION_TIMEOUT_MS = 20_000L
     }
 }

@@ -17,21 +17,28 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.arturo254.opentune.LocalPlayerAwareWindowInsets
 import com.arturo254.opentune.R
+import com.arturo254.opentune.spotify.SpotifyAccountViewModel
 import com.arturo254.opentune.spotify.SpotifyLibraryViewModel
 import com.arturo254.opentune.ui.component.ExpressivePullToRefreshBox
 import com.arturo254.opentune.ui.component.SpotifyLibraryPlaylistListItem
@@ -41,9 +48,27 @@ fun LibrarySpotifyPlaylistsScreen(
     navController: NavController,
     filterContent: @Composable () -> Unit, // Recibe los chips desde el padre
     viewModel: SpotifyLibraryViewModel = hiltViewModel(),
+    accountViewModel: SpotifyAccountViewModel = hiltViewModel(),
 ) {
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
+    val accountState by accountViewModel.uiState.collectAsStateWithLifecycle()
+
+    // ── Fix: esta pantalla puede quedarse en el back stack con un estado de
+    // cuenta "congelado" (creado antes de conectar Spotify). Al volver aquí
+    // desde Ajustes (donde sí ocurre el login), forzamos a releer la sesión
+    // guardada para que "Spotify no conectado" desaparezca de inmediato.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, accountViewModel) {
+        val observer =
+            LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    accountViewModel.restoreSession()
+                }
+            }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     ExpressivePullToRefreshBox(
         isRefreshing = isRefreshing,
@@ -75,14 +100,52 @@ fun LibrarySpotifyPlaylistsScreen(
                 }
             }
 
-            if (playlists.isEmpty()) {
-                item(key = "spotify_empty", contentType = "spotify_empty") {
-                    Text(
-                        text = stringResource(R.string.spotify_no_sources),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                        modifier = Modifier.padding(vertical = 16.dp, horizontal = 16.dp),
-                    )
+            when {
+                accountState.isLoading -> {
+                    item(key = "spotify_loading", contentType = "spotify_loading") {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp),
+                            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                        ) {
+                            CircularProgressIndicator()
+                        }
+                    }
+                }
+
+                !accountState.isAuthenticated -> {
+                    item(key = "spotify_connect", contentType = "spotify_connect") {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 24.dp),
+                            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.spotify_not_connected),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                            )
+                            Button(
+                                onClick = { navController.navigate("settings/backup_restore") },
+                            ) {
+                                Text(stringResource(R.string.spotify_connect))
+                            }
+                        }
+                    }
+                }
+
+                playlists.isEmpty() -> {
+                    item(key = "spotify_empty", contentType = "spotify_empty") {
+                        Text(
+                            text = stringResource(R.string.spotify_no_sources),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                            modifier = Modifier.padding(vertical = 16.dp, horizontal = 16.dp),
+                        )
+                    }
                 }
             }
 

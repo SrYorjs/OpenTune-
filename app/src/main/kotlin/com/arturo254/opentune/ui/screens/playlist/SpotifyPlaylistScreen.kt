@@ -9,6 +9,7 @@
 
 package com.arturo254.opentune.ui.screens.playlist
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -53,6 +54,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -80,8 +82,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import androidx.core.net.toUri
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.media3.exoplayer.offline.DownloadRequest
+import androidx.media3.exoplayer.offline.DownloadService
 import androidx.navigation.NavController
 import androidx.palette.graphics.Palette
 import coil3.compose.AsyncImage
@@ -92,6 +97,7 @@ import coil3.toBitmap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.arturo254.opentune.LocalDatabase
 import com.arturo254.opentune.LocalPlayerAwareWindowInsets
 import com.arturo254.opentune.LocalPlayerConnection
 import com.arturo254.opentune.R
@@ -99,6 +105,7 @@ import com.arturo254.opentune.constants.AppBarHeight
 import com.arturo254.opentune.constants.DisableBlurKey
 import com.arturo254.opentune.extensions.togglePlayPause
 import com.arturo254.opentune.models.MediaMetadata
+import com.arturo254.opentune.playback.ExoDownloadService
 import com.arturo254.opentune.spotify.SpotifyMapper
 import com.arturo254.opentune.spotify.SpotifyPlaybackResolver
 import com.arturo254.opentune.spotify.SpotifyPlaylistQueue
@@ -124,6 +131,7 @@ fun SpotifyPlaylistScreen(
     viewModel: SpotifyPlaylistViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val database = LocalDatabase.current
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val playerConnection = LocalPlayerConnection.current
     val coroutineScope = rememberCoroutineScope()
@@ -288,6 +296,75 @@ fun SpotifyPlaylistScreen(
                 )
             } finally {
                 resolvingTrackId = null
+            }
+        }
+    }
+
+    // ── Descargas ────────────────────────────────────────────────────────
+    // Reutiliza exactamente la misma resolución a YouTube Music que ya usa
+    // playPlaylist() para reproducir, y el mismo pipeline de descarga que
+    // usa el resto de la app (DownloadRequest + DownloadService), solo que
+    // en vez de encolarla en el reproductor, la manda a descargar offline.
+    val trackDownloadState = remember { mutableStateMapOf<String, SpotifyTrackDownloadState>() }
+    var isDownloadingAll by remember { mutableStateOf(false) }
+    var downloadAllProgress by remember { mutableStateOf(0 to 0) }
+
+    suspend fun downloadSpotifyTrack(track: SpotifyTrack): Boolean {
+        trackDownloadState[track.id] = SpotifyTrackDownloadState.RESOLVING
+        val metadata = SpotifyPlaybackResolver.resolveToMetadata(track)
+        if (metadata == null) {
+            trackDownloadState[track.id] = SpotifyTrackDownloadState.NOT_FOUND
+            return false
+        }
+        database.transaction {
+            insert(metadata)
+        }
+        val downloadRequest = DownloadRequest
+            .Builder(metadata.id, metadata.id.toUri())
+            .setCustomCacheKey(metadata.id)
+            .setData(metadata.title.toByteArray())
+            .build()
+        DownloadService.sendAddDownload(
+            context,
+            ExoDownloadService::class.java,
+            downloadRequest,
+            false,
+        )
+        trackDownloadState[track.id] = SpotifyTrackDownloadState.QUEUED
+        return true
+    }
+
+    fun downloadTrack(track: SpotifyTrack) {
+        if (trackDownloadState[track.id] == SpotifyTrackDownloadState.RESOLVING) return
+        coroutineScope.launch {
+            downloadSpotifyTrack(track)
+        }
+    }
+
+    fun downloadPlaylist() {
+        if (isDownloadingAll || tracks.isEmpty()) return
+        coroutineScope.launch {
+            isDownloadingAll = true
+            var notFoundCount = 0
+            tracks.forEachIndexed { index, track ->
+                downloadAllProgress = index to tracks.size
+                if (trackDownloadState[track.id] != SpotifyTrackDownloadState.QUEUED) {
+                    if (!downloadSpotifyTrack(track)) notFoundCount++
+                }
+            }
+            downloadAllProgress = tracks.size to tracks.size
+            isDownloadingAll = false
+            if (notFoundCount > 0) {
+                Toast
+                    .makeText(
+                        context,
+                        context.resources.getQuantityString(
+                            R.plurals.spotify_download_not_found,
+                            notFoundCount,
+                            notFoundCount,
+                        ),
+                        Toast.LENGTH_LONG,
+                    ).show()
             }
         }
     }
@@ -603,6 +680,34 @@ fun SpotifyPlaylistScreen(
 
                                 ToggleButton(
                                     checked = false,
+                                    onCheckedChange = { downloadPlaylist() },
+                                    enabled = tracks.isNotEmpty() && !isDownloadingAll,
+                                    modifier =
+                                        Modifier
+                                            .weight(1f)
+                                            .height(48.dp),
+                                    shapes = ButtonGroupDefaults.connectedMiddleButtonShapes(),
+                                    colors =
+                                        ToggleButtonDefaults.toggleButtonColors(
+                                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            checkedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                            checkedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        ),
+                                ) {
+                                    if (isDownloadingAll) {
+                                        CircularWavyProgressIndicator(modifier = Modifier.size(20.dp))
+                                    } else {
+                                        Icon(
+                                            painter = painterResource(R.drawable.download),
+                                            contentDescription = stringResource(R.string.spotify_download_playlist),
+                                            modifier = Modifier.size(24.dp),
+                                        )
+                                    }
+                                }
+
+                                ToggleButton(
+                                    checked = false,
                                     onCheckedChange = { playPlaylist(shuffled = true) },
                                     enabled = tracks.isNotEmpty(),
                                     modifier =
@@ -624,6 +729,19 @@ fun SpotifyPlaylistScreen(
                                         modifier = Modifier.size(24.dp),
                                     )
                                 }
+                            }
+
+                            if (isDownloadingAll) {
+                                Text(
+                                    text = stringResource(
+                                        R.string.spotify_downloading_playlist,
+                                        downloadAllProgress.first,
+                                        downloadAllProgress.second,
+                                    ),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 8.dp),
+                                )
                             }
 
                             Row(
@@ -716,6 +834,43 @@ fun SpotifyPlaylistScreen(
                     trailingContent = {
                         if (trackIsResolving) {
                             CircularWavyProgressIndicator(modifier = Modifier.size(24.dp))
+                        }
+                        when (trackDownloadState[track.id]) {
+                            SpotifyTrackDownloadState.RESOLVING -> {
+                                CircularWavyProgressIndicator(modifier = Modifier.size(20.dp))
+                            }
+                            SpotifyTrackDownloadState.QUEUED -> {
+                                Icon(
+                                    painter = painterResource(R.drawable.offline),
+                                    contentDescription = stringResource(R.string.downloading),
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                            SpotifyTrackDownloadState.NOT_FOUND -> {
+                                IconButton(
+                                    onClick = { downloadTrack(track) },
+                                    onLongClick = {},
+                                ) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.error),
+                                        contentDescription = stringResource(R.string.action_download),
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                            }
+                            null -> {
+                                IconButton(
+                                    onClick = { downloadTrack(track) },
+                                    onLongClick = {},
+                                ) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.download),
+                                        contentDescription = stringResource(R.string.action_download),
+                                        modifier = Modifier.size(20.dp),
+                                    )
+                                }
+                            }
                         }
                     },
                     modifier =
@@ -826,6 +981,8 @@ fun SpotifyPlaylistScreen(
         )
     }
 }
+
+private enum class SpotifyTrackDownloadState { RESOLVING, QUEUED, NOT_FOUND }
 
 private fun SpotifyTrack.isResolvedAs(mediaMetadata: MediaMetadata?): Boolean {
     if (mediaMetadata == null) return false

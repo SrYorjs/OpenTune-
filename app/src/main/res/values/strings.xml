@@ -181,6 +181,10 @@
         <item quantity="one">%d song</item>
         <item quantity="other">%d songs</item>
     </plurals>
+    <plurals name="spotify_download_not_found">
+        <item quantity="one">%1$d track not found on YouTube Music</item>
+        <item quantity="other">%1$d tracks not found on YouTube Music</item>
+    </plurals>
     <plurals name="n_artist">
         <item quantity="one">%d artist</item>
         <item quantity="other">%d artists</item>

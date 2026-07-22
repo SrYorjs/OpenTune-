@@ -41,6 +41,8 @@
     <string name="generating_image">Generando imagen</string>
     <string name="please_wait">Espera un momento</string>
     <string name="cancel">Cancelar</string>
+    <string name="spotify_download_playlist">Descargar playlist</string>
+    <string name="spotify_downloading_playlist">Descargando %1$d/%2$d</string>
     <string name="share_lyrics">Compartir letra</string>
     <string name="share_as_text">Compartir como texto</string>
     <string name="share_as_image">Compartir como imagen</string>

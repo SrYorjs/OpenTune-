@@ -110,7 +110,10 @@ fun OpenTuneTheme(
 
 @Composable
 private fun updateTransition(targetColorScheme: ColorScheme): ColorScheme {
-    val animationSpec = spring<Color>(stiffness = Spring.StiffnessLow)
+    val animationSpec = spring<Color>(
+        stiffness = Spring.StiffnessMediumLow,
+        dampingRatio = Spring.DampingRatioMediumBouncy
+    )
     return ColorScheme(
         primary = animateColorAsState(
             targetColorScheme.primary,

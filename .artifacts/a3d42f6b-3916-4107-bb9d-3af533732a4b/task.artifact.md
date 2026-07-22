@@ -1,0 +1,5 @@
+- [x] Actualizar `PlayerBody.kt`: Añadir flags `contentCheckOk` y `racyCheckOk`
+- [x] Actualizar `InnerTube.kt`: Pasar los nuevos flags en la petición `player`
+- [x] Actualizar `YTPlayerUtils.kt`: Reordenar `STREAM_FALLBACK_CLIENTS` para priorizar TV/VR
+- [x] Actualizar `YTPlayerUtils.kt`: Ampliar frases de error en español para edad/bots
+- [/] Verificar compilación y análisis estático

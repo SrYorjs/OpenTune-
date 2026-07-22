@@ -33,6 +33,7 @@ import com.arturo254.opentune.innertube.models.YouTubeClient.Companion.TVHTML5
 import com.arturo254.opentune.innertube.models.YouTubeClient.Companion.VISIONOS
 import com.arturo254.opentune.innertube.models.YouTubeClient.Companion.WEB
 import com.arturo254.opentune.innertube.models.YouTubeClient.Companion.WEB_CREATOR
+import com.arturo254.opentune.innertube.models.YouTubeClient.Companion.WEB_EMBEDDED
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import timber.log.Timber
@@ -64,6 +65,13 @@ object YTPlayerUtils {
         }
         val client = OkHttpClient.Builder()
             .proxy(current)
+            .connectTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
+            // Hard per-call ceiling: some CDN edges accept the connection but then
+            // stall mid-response, which the connect/read timeouts above don't catch
+            // since each individual read still "succeeds" within its own window.
+            .callTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
             .build()
         streamClientPair = current to client
         return client
@@ -82,23 +90,24 @@ object YTPlayerUtils {
      * Clients used for fallback streams in case the streams of the main client do not work.
      */
     private val STREAM_FALLBACK_CLIENTS: Array<YouTubeClient> = arrayOf(
+        TVHTML5,
+        TVHTML5_SIMPLY_EMBEDDED_PLAYER,
+        ANDROID_VR_NO_AUTH,
+        ANDROID_VR_1_61_48,
+        ANDROID_VR_1_43_32,
         IOS,
         MOBILE,
         ANDROID_MUSIC,
         IOS_MUSIC,
-        ANDROID_VR_NO_AUTH,
-        ANDROID_VR_1_61_48,
-        ANDROID_VR_1_43_32,
         ANDROID_CREATOR,
         ANDROID_TESTSUITE,
         ANDROID_UNPLUGGED,
         IPADOS,
         VISIONOS,
-        TVHTML5,
-        TVHTML5_SIMPLY_EMBEDDED_PLAYER,
         WEB,
         WEB_CREATOR,
-        WEB_REMIX
+        WEB_REMIX,
+        WEB_EMBEDDED
     )
     private data class CachedStreamUrl(
         val url: String,
@@ -225,12 +234,12 @@ object YTPlayerUtils {
 
         val orderedFallbackClients =
             (
-                if (isLoggedIn) {
-                    STREAM_FALLBACK_CLIENTS.filter { it.loginSupported } + STREAM_FALLBACK_CLIENTS.filterNot { it.loginSupported }
-                } else {
-                    STREAM_FALLBACK_CLIENTS.toList()
-                }
-                ).distinct()
+                    if (isLoggedIn) {
+                        STREAM_FALLBACK_CLIENTS.filter { it.loginSupported } + STREAM_FALLBACK_CLIENTS.filterNot { it.loginSupported }
+                    } else {
+                        STREAM_FALLBACK_CLIENTS.toList()
+                    }
+                    ).distinct()
 
         val preferredYouTubeClient =
             when (preferredStreamClient) {
@@ -348,7 +357,10 @@ object YTPlayerUtils {
             streamUrl = selectedUrl
             streamExpiresInSeconds = streamPlayerResponse.streamingData?.expiresInSeconds
 
-            if (streamExpiresInSeconds == null) continue
+            if (streamExpiresInSeconds == null) {
+                Timber.tag(logTag).w("Missing stream expire time for client ${client.clientName}, using default fallback (6h)")
+                streamExpiresInSeconds = 21600 // 6 hours
+            }
 
             Timber.tag(logTag).i("Format found: ${format.mimeType}, bitrate: ${format.bitrate}")
             Timber.tag(logTag).v("Stream expires in: $streamExpiresInSeconds seconds")
@@ -407,9 +419,10 @@ object YTPlayerUtils {
             )
         }
 
+        // Fallback in case it's still null somehow after the loop
         if (streamExpiresInSeconds == null) {
-            Timber.tag(logTag).e("Missing stream expire time")
-            throw Exception("Missing stream expire time")
+            Timber.tag(logTag).w("Missing stream expire time, defaulting to 6 hours")
+            streamExpiresInSeconds = 21600
         }
 
         if (format == null) {
@@ -677,22 +690,35 @@ object YTPlayerUtils {
     private fun isBotDetectionError(reason: String): Boolean {
         val lower = reason.lowercase(Locale.US)
         return "bot" in lower ||
-            "unusual traffic" in lower ||
-            "automated" in lower ||
-            "confirm" in lower && "not a" in lower ||
-            "not a robot" in lower ||
-            "verify" in lower && "human" in lower
+                "unusual traffic" in lower ||
+                "automated" in lower ||
+                "confirm" in lower && "not a" in lower ||
+                "not a robot" in lower ||
+                "verify" in lower && "human" in lower ||
+                "tráfico inusual" in lower ||
+                "robot" in lower ||
+                "automatizada" in lower ||
+                "humano" in lower ||
+                "verificar" in lower && "tú" in lower
     }
 
     private fun isLoginRecoveryError(reason: String): Boolean {
         val lower = reason.lowercase(Locale.US)
         return "confirm your age" in lower ||
-            "age-restricted" in lower ||
-            "age restricted" in lower ||
-            "inappropriate for some users" in lower ||
-            "mature audiences" in lower ||
-            "adult" in lower && "sign in" in lower ||
-            "allow" in lower && "youtube music" in lower
+                "age-restricted" in lower ||
+                "age restricted" in lower ||
+                "inappropriate for some users" in lower ||
+                "mature audiences" in lower ||
+                "adult" in lower && "sign in" in lower ||
+                "allow" in lower && "youtube music" in lower ||
+                "confirma tu edad" in lower ||
+                "restricción de edad" in lower ||
+                "inadecuado para algunos usuarios" in lower ||
+                "público maduro" in lower ||
+                "mayor de edad" in lower ||
+                "inicia sesión" in lower && "edad" in lower ||
+                "para ver este video" in lower ||
+                "identidad" in lower && "confirmar" in lower
     }
 
     fun isBotDetectionException(error: PlaybackException): Boolean {

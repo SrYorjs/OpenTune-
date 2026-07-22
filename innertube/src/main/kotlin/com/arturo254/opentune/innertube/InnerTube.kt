@@ -335,10 +335,10 @@ class InnerTube {
                 },
                 videoId = videoId,
                 playlistId = playlistId,
-                playbackContext = if (client.useSignatureTimestamp && signatureTimestamp != null) {
+                playbackContext = if (client.useSignatureTimestamp) {
                     PlayerBody.PlaybackContext(
                         PlayerBody.PlaybackContext.ContentPlaybackContext(
-                            signatureTimestamp
+                            signatureTimestamp = signatureTimestamp
                         )
                     )
                 } else null,

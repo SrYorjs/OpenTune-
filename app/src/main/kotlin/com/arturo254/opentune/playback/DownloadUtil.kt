@@ -29,10 +29,15 @@ import com.arturo254.opentune.constants.PlayerStreamClient
 import com.arturo254.opentune.constants.PlayerStreamClientKey
 import com.arturo254.opentune.db.MusicDatabase
 import com.arturo254.opentune.db.entities.FormatEntity
+import com.arturo254.opentune.db.entities.LyricsEntity
+import com.arturo254.opentune.db.entities.LyricsEntity.Companion.LYRICS_NOT_FOUND
 import com.arturo254.opentune.db.entities.SongEntity
 import com.arturo254.opentune.di.DownloadCache
 import com.arturo254.opentune.di.PlayerCache
+import com.arturo254.opentune.lyrics.LyricsHelper
+import com.arturo254.opentune.models.MediaMetadata
 import com.arturo254.opentune.utils.YTPlayerUtils
+import timber.log.Timber
 import com.arturo254.opentune.utils.StreamClientUtils
 import com.arturo254.opentune.utils.enumPreference
 import com.arturo254.opentune.constants.NetworkMeteredKey
@@ -56,6 +61,7 @@ constructor(
     val databaseProvider: DatabaseProvider,
     @DownloadCache val downloadCache: Cache,
     @PlayerCache val playerCache: Cache,
+    private val lyricsHelper: LyricsHelper,
 ) {
     private val connectivityManager = context.getSystemService<ConnectivityManager>()!!
     private val audioQuality by enumPreference(context, AudioQualityKey, AudioQuality.AUTO)
@@ -75,10 +81,10 @@ constructor(
                 val host = request.url.host
                 val isYouTubeMediaHost =
                     host.endsWith("googlevideo.com") ||
-                        host.endsWith("googleusercontent.com") ||
-                        host.endsWith("youtube.com") ||
-                        host.endsWith("youtube-nocookie.com") ||
-                        host.endsWith("ytimg.com")
+                            host.endsWith("googleusercontent.com") ||
+                            host.endsWith("youtube.com") ||
+                            host.endsWith("youtube-nocookie.com") ||
+                            host.endsWith("ytimg.com")
 
                 if (!isYouTubeMediaHost) return@addInterceptor chain.proceed(request)
 
@@ -118,9 +124,11 @@ constructor(
                 }
             }
             if (playerCache.isCached(mediaId, dataSpec.position, length)) {
+                CoroutineScope(Dispatchers.IO).launch { ensureLyricsSavedByLookup(mediaId) }
                 return@Factory dataSpec
             }
             songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }?.let {
+                CoroutineScope(Dispatchers.IO).launch { ensureLyricsSavedByLookup(mediaId) }
                 return@Factory dataSpec.withUri(it.first.toUri())
             }
             val playbackData = runBlocking(Dispatchers.IO) {
@@ -168,6 +176,18 @@ constructor(
                 }
 
                 upsert(updatedSong)
+
+                // Aseguramos que la letra quede guardada localmente para poder
+                // verla sin conexión una vez que la canción ya está descargada.
+                CoroutineScope(Dispatchers.IO).launch {
+                    ensureLyricsSaved(
+                        mediaId = mediaId,
+                        title = updatedSong.title,
+                        artist = playbackData.videoDetails?.author.orEmpty(),
+                        album = null,
+                        duration = updatedSong.duration,
+                    )
+                }
             }
 
             val streamUrl = playbackData.streamUrl
@@ -217,6 +237,66 @@ constructor(
     }
 
     fun getDownload(songId: String): Flow<Download?> = downloads.map { it[songId] }
+
+    /**
+     * Igual que [ensureLyricsSaved], pero para los casos en que la canción
+     * se resuelve desde caché (ya se había reproducido antes) y no tenemos
+     * a mano el `playbackData` de YouTube. Busca el título/artista en la
+     * base de datos local, donde ya deberían estar guardados.
+     */
+    private suspend fun ensureLyricsSavedByLookup(mediaId: String) {
+        val existing = database.getLyricsById(mediaId)
+        if (existing != null) return
+
+        val song = database.getSongByIdBlocking(mediaId) ?: run {
+            Timber.tag("DownloadUtil").w("No se encontró la canción $mediaId en la BD, no se puede buscar letra todavía")
+            return
+        }
+
+        ensureLyricsSaved(
+            mediaId = mediaId,
+            title = song.song.title,
+            artist = song.artists.joinToString { it.name },
+            album = null,
+            duration = song.song.duration,
+        )
+    }
+
+    /**
+     * Busca la letra de una canción descargada y la guarda en la base de datos
+     * local (tabla `lyrics`) para que quede disponible sin conexión.
+     * No hace nada si ya existe una letra guardada (encontrada o no encontrada),
+     * para no repetir peticiones de red cada vez que se re-descarga el mismo tema.
+     */
+    private suspend fun ensureLyricsSaved(
+        mediaId: String,
+        title: String,
+        artist: String,
+        album: String?,
+        duration: Int,
+    ) {
+        val existing = database.getLyricsById(mediaId)
+        if (existing != null) return
+
+        val mediaMetadata = MediaMetadata(
+            id = mediaId,
+            title = title,
+            artists = listOf(MediaMetadata.Artist(id = null, name = artist)),
+            duration = duration,
+            album = album?.let { MediaMetadata.Album(id = "", title = it) },
+        )
+
+        val lyrics = runCatching {
+            lyricsHelper.getLyrics(mediaMetadata)
+        }.getOrElse {
+            Timber.tag("DownloadUtil").w(it, "No se pudo obtener la letra para $mediaId")
+            LYRICS_NOT_FOUND
+        }
+
+        database.query {
+            upsert(LyricsEntity(id = mediaId, lyrics = lyrics))
+        }
+    }
 
     private fun deviceSupportsMimeType(mimeType: String): Boolean {
         return runCatching {

@@ -23,7 +23,9 @@ data class PlayerBody(
     ) {
         @Serializable
         data class ContentPlaybackContext(
-            val signatureTimestamp: Int
+            val signatureTimestamp: Int? = null,
+            val contentCheckOk: Boolean = true,
+            val racyCheckOk: Boolean = true,
         )
     }
 
