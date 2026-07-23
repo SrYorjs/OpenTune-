@@ -1,11 +1,3 @@
-/*
- * OpenTune Project Original (2026)
- * Arturo254 (github.com/Arturo254)
- * Licensed Under GPL-3.0 | see git history for contributors
- */
-
-
-
 package com.arturo254.opentune.lyrics
 
 import android.content.Context
@@ -77,6 +69,8 @@ constructor(
         val providers = if (preferredProviderOnly) listOf(ordered.first()) else ordered
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         val deferred = scope.async {
+            var fallback: String? = null
+
             for (provider in providers) {
                 val enabled = provider.isEnabled(context)
 
@@ -91,7 +85,12 @@ constructor(
                         )
                         result.onSuccess { lyrics ->
                             if (isMeaningfulLyrics(lyrics)) {
-                                return@async lyrics
+                                if (isEnhancedLyrics(lyrics)) {
+                                    return@async lyrics
+                                }
+                                if (fallback == null) {
+                                    fallback = lyrics
+                                }
                             }
                         }.onFailure {
                             reportException(it)
@@ -101,7 +100,7 @@ constructor(
                     }
                 }
             }
-            return@async LYRICS_NOT_FOUND
+            return@async fallback ?: LYRICS_NOT_FOUND
         }
 
         val lyrics = deferred.await()
@@ -210,6 +209,9 @@ constructor(
 
         return remaining.any { !it.isWhitespace() && it != '\u00A0' }
     }
+
+    private fun isEnhancedLyrics(lyrics: String): Boolean =
+        com.arturo254.opentune.lyrics.LyricsUtils.WORD_TIME_REGEX.containsMatchIn(lyrics)
 
     fun cancelCurrentLyricsJob() {
         currentLyricsJob?.cancel()
