@@ -1,17 +1,21 @@
 package com.arturo254.opentune.lyricsify
 
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.app.Application
 import android.content.Context
+import android.os.Bundle
+import android.view.ViewGroup
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.jsoup.Jsoup
 import timber.log.Timber
+import java.lang.ref.WeakReference
 import kotlin.coroutines.resume
 
 object Lyricsify {
@@ -26,25 +30,150 @@ object Lyricsify {
     private val BLOCK_CLOSE_TAG_REGEX = "(?i)</(p|div)>".toRegex()
     private val HTML_TAG_REGEX = "<[^>]+>".toRegex()
 
+    private const val MAX_LYRICS_POLL_ATTEMPTS = 12
+    private const val LYRICS_POLL_INTERVAL_MS = 700L
+
+    private const val SELECT_ENHANCED_MODE_JS = """
+        (function(){
+            var radio = document.getElementById('radio_word');
+            if (radio) {
+                radio.checked = true;
+                radio.dispatchEvent(new Event('input', {bubbles:true}));
+                radio.dispatchEvent(new Event('change', {bubbles:true}));
+                radio.dispatchEvent(new Event('click', {bubbles:true}));
+            }
+            return true;
+        })()
+    """
+
+    private const val READ_LYRICS_DISPLAY_JS = """
+        (function(){
+            var el = document.getElementById('lyrics_display');
+            return el ? el.innerText : '';
+        })()
+    """
+
     private var appContext: Context? = null
+    private var activityRef: WeakReference<Activity>? = null
 
     fun init(context: Context) {
         appContext = context.applicationContext
+        val app = context.applicationContext as? Application ?: return
+        app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: Activity) {
+                activityRef = WeakReference(activity)
+            }
+
+            override fun onActivityPaused(activity: Activity) {
+                if (activityRef?.get() === activity) activityRef = null
+            }
+
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityStarted(activity: Activity) {}
+            override fun onActivityStopped(activity: Activity) {}
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+            override fun onActivityDestroyed(activity: Activity) {}
+        })
     }
 
+    private fun dpToPx(context: Context, dp: Int): Int =
+        (dp * context.resources.displayMetrics.density).toInt()
+
     @SuppressLint("SetJavaScriptEnabled")
+    private suspend fun fetchLyricsText(url: String): String? = withContext(Dispatchers.Main) {
+        val context = appContext ?: throw Exception("Lyricsify.init(context) was never called")
+        val activity = activityRef?.get()
+        val host = activity?.window?.decorView as? ViewGroup
+
+        val result = withTimeoutOrNull(25000) {
+            suspendCancellableCoroutine<String?> { continuation ->
+                val webView = WebView(activity ?: context)
+                var resumed = false
+                var attempts = 0
+                var bestSoFar: String? = null
+
+                fun finishWith(result: String?) {
+                    if (resumed) return
+                    resumed = true
+                    webView.stopLoading()
+                    host?.removeView(webView)
+                    webView.destroy()
+                    if (continuation.isActive) continuation.resume(result)
+                }
+
+                fun readLyricsDisplay() {
+                    webView.evaluateJavascript(READ_LYRICS_DISPLAY_JS) { raw ->
+                        val decoded = runCatching {
+                            JSONArray("[$raw]").getString(0)
+                        }.getOrDefault("")
+
+                        if (decoded.isNotBlank()) bestSoFar = decoded
+
+                        val isEnhanced = decoded.isNotBlank() && WORD_TIME_REGEX.containsMatchIn(decoded)
+                        attempts++
+
+                        if (isEnhanced || attempts >= MAX_LYRICS_POLL_ATTEMPTS) {
+                            finishWith(bestSoFar)
+                        } else {
+                            webView.postDelayed({ readLyricsDisplay() }, LYRICS_POLL_INTERVAL_MS)
+                        }
+                    }
+                }
+
+                webView.settings.javaScriptEnabled = true
+                webView.settings.domStorageEnabled = true
+                webView.settings.userAgentString = MOBILE_UA
+
+                webView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView, finishedUrl: String) {
+                        view.postDelayed({
+                            view.evaluateJavascript(SELECT_ENHANCED_MODE_JS) {
+                                view.postDelayed({ readLyricsDisplay() }, LYRICS_POLL_INTERVAL_MS)
+                            }
+                        }, 1200)
+                    }
+                }
+
+                continuation.invokeOnCancellation {
+                    webView.stopLoading()
+                    host?.removeView(webView)
+                    webView.destroy()
+                }
+
+                val width = dpToPx(context, 360)
+                val height = dpToPx(context, 640)
+                webView.alpha = 0f
+
+                if (host != null) {
+                    webView.layoutParams = ViewGroup.LayoutParams(width, height)
+                    host.addView(webView)
+                } else {
+                    webView.layout(0, 0, width, height)
+                }
+
+                webView.loadUrl(url)
+            }
+        }
+
+        Timber.tag(TAG).d("Lyrics page fetch $url -> ${result?.length ?: 0} chars")
+        result
+    }
+
     private suspend fun fetchHtml(url: String): String = withContext(Dispatchers.Main) {
         val context = appContext ?: throw Exception("Lyricsify.init(context) was never called")
+        val activity = activityRef?.get()
+        val host = activity?.window?.decorView as? ViewGroup
 
         val html = withTimeoutOrNull(20000) {
             suspendCancellableCoroutine<String> { continuation ->
-                val webView = WebView(context)
+                val webView = WebView(activity ?: context)
                 var resumed = false
 
                 fun finishWith(result: String) {
                     if (resumed) return
                     resumed = true
                     webView.stopLoading()
+                    host?.removeView(webView)
                     webView.destroy()
                     if (continuation.isActive) continuation.resume(result)
                 }
@@ -68,7 +197,19 @@ object Lyricsify {
 
                 continuation.invokeOnCancellation {
                     webView.stopLoading()
+                    host?.removeView(webView)
                     webView.destroy()
+                }
+
+                val width = dpToPx(context, 360)
+                val height = dpToPx(context, 640)
+                webView.alpha = 0f
+
+                if (host != null) {
+                    webView.layoutParams = ViewGroup.LayoutParams(width, height)
+                    host.addView(webView)
+                } else {
+                    webView.layout(0, 0, width, height)
                 }
 
                 webView.loadUrl(url)
@@ -83,6 +224,14 @@ object Lyricsify {
         text.lowercase()
             .replace(Regex("[^a-z0-9]+"), " ")
             .trim()
+
+    private fun slugify(text: String): String {
+        val stripped = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFD)
+            .replace("\\p{M}".toRegex(), "")
+        return stripped.lowercase()
+            .replace("[^a-z0-9]+".toRegex(), "-")
+            .trim('-')
+    }
 
     private fun scoreMatch(query: String, candidate: String): Int {
         val queryTokens = normalize(query).split(" ").filter { it.isNotBlank() }.toSet()
@@ -193,9 +342,26 @@ object Lyricsify {
     }
 
     suspend fun getLyrics(title: String, artist: String): Result<String> = runCatching {
-        val songUrl = findSongUrl(title, artist) ?: throw Exception("Song not found on Lyricsify")
-        val songHtml = fetchHtml(songUrl)
-        val extracted = extractLrcContent(songHtml) ?: throw Exception("No LRC content found on Lyricsify")
+        val directUrl = "$BASE_URL/lyrics/${slugify(artist)}/${slugify(title)}"
+
+        var songUrl = directUrl
+        var extracted = runCatching { fetchLyricsText(directUrl) }.getOrNull()
+
+        if (extracted == null) {
+            extracted = runCatching { extractLrcContent(fetchHtml(directUrl)) }.getOrNull()
+        }
+
+        if (extracted == null) {
+            Timber.tag(TAG).d("Slug URL had no usable content, falling back to search")
+            val foundUrl = findSongUrl(title, artist) ?: throw Exception("Song not found on Lyricsify")
+            songUrl = foundUrl
+            extracted = runCatching { fetchLyricsText(foundUrl) }.getOrNull()
+                ?: extractLrcContent(fetchHtml(foundUrl))
+                        ?: throw Exception("No LRC content found on Lyricsify")
+        }
+
+        Timber.tag(TAG).d("Using song page: $songUrl, isEnhanced=${WORD_TIME_REGEX.containsMatchIn(extracted)}")
+
         if (extracted.startsWith("http")) {
             val lrcHtml = fetchHtml(extracted)
             val lrcBody = Jsoup.parse(lrcHtml).body().text()
