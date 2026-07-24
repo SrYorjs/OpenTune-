@@ -1,26 +1,23 @@
 package com.arturo254.opentune.lyricsify
 
-import timber.log.Timber
-import io.ktor.client.HttpClient
-import io.ktor.client.plugins.HttpTimeout
-import io.ktor.client.request.get
-import io.ktor.client.request.headers
-import io.ktor.client.statement.HttpResponse
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.isSuccess
+import android.annotation.SuppressLint
+import android.content.Context
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONArray
 import org.jsoup.Jsoup
-import org.jsoup.nodes.Document
+import timber.log.Timber
+import kotlin.coroutines.resume
 
 object Lyricsify {
     private const val TAG = "Lyricsify"
-
-    private val client = HttpClient {
-        install(HttpTimeout) {
-            requestTimeoutMillis = 12000
-            connectTimeoutMillis = 8000
-        }
-    }
     private const val BASE_URL = "https://www.lyricsify.com"
+    private const val MOBILE_UA = "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
 
     private val LRC_LINE_REGEX = "\\[\\d\\d:\\d\\d\\.\\d{2,3}\\].*".toRegex()
     private val WORD_TIME_REGEX = "<\\d\\d:\\d\\d\\.\\d{2,3}>".toRegex()
@@ -29,20 +26,57 @@ object Lyricsify {
     private val BLOCK_CLOSE_TAG_REGEX = "(?i)</(p|div)>".toRegex()
     private val HTML_TAG_REGEX = "<[^>]+>".toRegex()
 
-    private suspend fun fetch(url: String): String {
-        val response: HttpResponse = client.get(url) {
-            headers {
-                append("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36")
-                append("Accept", "text/html,application/xhtml+xml")
-                append("Accept-Language", "en-US,en;q=0.9")
+    private var appContext: Context? = null
+
+    fun init(context: Context) {
+        appContext = context.applicationContext
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private suspend fun fetchHtml(url: String): String = withContext(Dispatchers.Main) {
+        val context = appContext ?: throw Exception("Lyricsify.init(context) was never called")
+
+        val html = withTimeoutOrNull(20000) {
+            suspendCancellableCoroutine<String> { continuation ->
+                val webView = WebView(context)
+                var resumed = false
+
+                fun finishWith(result: String) {
+                    if (resumed) return
+                    resumed = true
+                    webView.stopLoading()
+                    webView.destroy()
+                    if (continuation.isActive) continuation.resume(result)
+                }
+
+                webView.settings.javaScriptEnabled = true
+                webView.settings.domStorageEnabled = true
+                webView.settings.userAgentString = MOBILE_UA
+
+                webView.webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView, finishedUrl: String) {
+                        view.postDelayed({
+                            view.evaluateJavascript("document.documentElement.outerHTML") { raw ->
+                                val decoded = runCatching {
+                                    JSONArray("[$raw]").getString(0)
+                                }.getOrDefault("")
+                                finishWith(decoded)
+                            }
+                        }, 1800)
+                    }
+                }
+
+                continuation.invokeOnCancellation {
+                    webView.stopLoading()
+                    webView.destroy()
+                }
+
+                webView.loadUrl(url)
             }
         }
-        val body = response.bodyAsText()
-        Timber.tag(TAG).d("GET $url -> ${response.status.value}, ${body.length} chars")
-        if (!response.status.isSuccess()) {
-            throw Exception("HTTP ${response.status.value} fetching $url")
-        }
-        return body
+
+        Timber.tag(TAG).d("WebView fetch $url -> ${html?.length ?: 0} chars")
+        html ?: throw Exception("Timed out loading $url in WebView")
     }
 
     private fun normalize(text: String) =
@@ -75,7 +109,7 @@ object Lyricsify {
         Timber.tag(TAG).d("Searching Lyricsify for: $query")
 
         val byQ = runCatching {
-            extractCandidates(fetch("$BASE_URL/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}"), query)
+            extractCandidates(fetchHtml("$BASE_URL/search?q=${java.net.URLEncoder.encode(query, "UTF-8")}"), query)
         }.onFailure {
             Timber.tag(TAG).w("search?q= failed: ${it.message}")
         }.getOrDefault(emptyList())
@@ -88,7 +122,7 @@ object Lyricsify {
 
         val byFields = runCatching {
             val url = "$BASE_URL/search?artist=${java.net.URLEncoder.encode(artist, "UTF-8")}&title=${java.net.URLEncoder.encode(title, "UTF-8")}"
-            extractCandidates(fetch(url), query)
+            extractCandidates(fetchHtml(url), query)
         }.onFailure {
             Timber.tag(TAG).w("search?artist&title= failed: ${it.message}")
         }.getOrDefault(emptyList())
@@ -160,12 +194,13 @@ object Lyricsify {
 
     suspend fun getLyrics(title: String, artist: String): Result<String> = runCatching {
         val songUrl = findSongUrl(title, artist) ?: throw Exception("Song not found on Lyricsify")
-        val songHtml = fetch(songUrl)
+        val songHtml = fetchHtml(songUrl)
         val extracted = extractLrcContent(songHtml) ?: throw Exception("No LRC content found on Lyricsify")
         if (extracted.startsWith("http")) {
-            val lrcFile = fetch(extracted)
-            if (lrcFile.isBlank()) throw Exception("Empty LRC file from Lyricsify")
-            lrcFile
+            val lrcHtml = fetchHtml(extracted)
+            val lrcBody = Jsoup.parse(lrcHtml).body().text()
+            if (lrcBody.isBlank()) throw Exception("Empty LRC file from Lyricsify")
+            lrcBody
         } else {
             extracted
         }

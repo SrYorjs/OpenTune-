@@ -94,6 +94,7 @@ class App : Application(), SingletonImageLoader.Factory {
 
         initializeCriticalSync()
         initializeDeferredAsync()
+        com.arturo254.opentune.lyricsify.Lyricsify.init(this)
     }
 
     private fun initializeCriticalSync() {
